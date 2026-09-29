@@ -140,7 +140,7 @@ public final class Router implements HttpHandler {
         int status;
         try {
             if (route.module != null) {
-                moduleAccess.require(ctx, route.module);
+                ctx.setCaller(moduleAccess.require(ctx, route.module));
             }
             Response response = route.handler.handle(ctx);
             status = response.status();

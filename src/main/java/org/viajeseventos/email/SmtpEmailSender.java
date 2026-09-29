@@ -41,10 +41,14 @@ public final class SmtpEmailSender implements EmailSender {
     }
 
     @Override
-    public void send(String to, String subject, String htmlBody) {
+    public void send(String to, String subject, String htmlBody, OnBehalfOf onBehalfOf) {
         try {
             MimeMessage message = new MimeMessage(session);
-            message.setFrom(new InternetAddress(fromAddress, fromName));
+            boolean named = onBehalfOf != null && onBehalfOf.name() != null && !onBehalfOf.name().isBlank();
+            message.setFrom(new InternetAddress(fromAddress, named ? onBehalfOf.name() : fromName, "UTF-8"));
+            if (onBehalfOf != null && onBehalfOf.replyTo() != null && !onBehalfOf.replyTo().isBlank()) {
+                message.setReplyTo(InternetAddress.parse(onBehalfOf.replyTo()));
+            }
             message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(to));
             message.setSubject(subject, "UTF-8");
             message.setContent(htmlBody, "text/html; charset=UTF-8");

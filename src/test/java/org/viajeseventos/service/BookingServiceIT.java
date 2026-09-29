@@ -12,6 +12,7 @@ import org.viajeseventos.repository.BookingRepository;
 import org.viajeseventos.repository.EventRepository;
 import org.viajeseventos.repository.ProfileRepository;
 import org.viajeseventos.repository.UserRepository;
+import org.viajeseventos.security.Caller;
 import org.viajeseventos.testsupport.TestDb;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -35,6 +36,7 @@ class BookingServiceIT {
     private static BookingRepository bookingRepository;
     private static UserRepository userRepository;
     private static long clientProfileId;
+    private static long companyId;
     /** 2026-10-01 — before every seeded event. */
     private static BookingService service;
 
@@ -45,6 +47,7 @@ class BookingServiceIT {
         bookingRepository = new BookingRepository(pool);
         userRepository = new UserRepository(pool);
         clientProfileId = new ProfileRepository(pool).findByCode(Profile.CLIENT).orElseThrow().getId();
+        companyId = TestDb.seededCompanyId(pool);
         service = serviceAt("2026-10-01T12:00:00Z");
     }
 
@@ -55,26 +58,26 @@ class BookingServiceIT {
 
     @Test
     void bookingStoresEveryPassengerAndCountsTowardsTheEvent() {
-        long userId = newUser();
+        Caller user = newUser();
         long eventId = eventId("mana");
 
-        Booking booking = service.create(userId, eventId, request("Ana Pérez", "Juan Soto"));
+        Booking booking = service.create(user, eventId, request("Ana Pérez", "Juan Soto"));
 
         assertEquals(BookingStatus.CONFIRMED, booking.status());
         assertEquals(2, booking.passengers().size());
         assertEquals("+56 9 1234 5678", booking.passengers().getFirst().phone());
-        assertEquals(2, myCount(userId, eventId));
-        assertEquals(List.of(booking.id()), service.myBookings(userId).stream().map(Booking::id).toList());
-        assertTrue(service.allBookings(eventId).stream().anyMatch(b -> b.id() == booking.id()));
+        assertEquals(2, myCount(user, eventId));
+        assertEquals(List.of(booking.id()), service.myBookings(user.userId()).stream().map(Booking::id).toList());
+        assertTrue(service.allBookings(companyId, eventId).stream().anyMatch(b -> b.id() == booking.id()));
     }
 
     @Test
     void endedEventsAreNotListedNorBookable() {
         BookingService later = serviceAt("2030-01-01T12:00:00Z");
-        long userId = newUser();
+        Caller user = newUser();
 
-        assertTrue(later.upcomingEvents(userId).isEmpty());
-        assertThrows(BusinessRuleException.class, () -> later.create(userId, eventId("mana"), request("Ana Pérez")));
+        assertTrue(later.upcomingEvents(user).isEmpty());
+        assertThrows(BusinessRuleException.class, () -> later.create(user, eventId("mana"), request("Ana Pérez")));
     }
 
     @Test
@@ -86,18 +89,18 @@ class BookingServiceIT {
 
     @Test
     void onlyTheOwnerCanCancelAndOnlyOnce() {
-        long owner = newUser();
-        long stranger = newUser();
+        Caller owner = newUser();
+        Caller stranger = newUser();
         long eventId = eventId("deep-purple");
         Booking booking = service.create(owner, eventId, request("Ana Pérez", "Juan Soto"));
 
-        assertThrows(ForbiddenException.class, () -> service.cancel(stranger, booking.id()));
+        assertThrows(ForbiddenException.class, () -> service.cancel(stranger.userId(), booking.id()));
 
-        Booking cancelled = service.cancel(owner, booking.id());
+        Booking cancelled = service.cancel(owner.userId(), booking.id());
         assertEquals(BookingStatus.CANCELLED, cancelled.status());
         assertNotNull(cancelled.cancelledAt());
         assertEquals(0, myCount(owner, eventId));
-        assertThrows(BusinessRuleException.class, () -> service.cancel(owner, booking.id()));
+        assertThrows(BusinessRuleException.class, () -> service.cancel(owner.userId(), booking.id()));
     }
 
     @Test
@@ -113,24 +116,25 @@ class BookingServiceIT {
     }
 
     private static long eventId(String slug) {
-        return eventRepository.findAll().stream().filter(e -> e.slug().equals(slug)).findFirst().orElseThrow().id();
+        return eventRepository.findAll(companyId).stream().filter(e -> e.slug().equals(slug)).findFirst().orElseThrow().id();
     }
 
-    private static int myCount(long userId, long eventId) {
-        return service.upcomingEvents(userId).stream()
+    private static int myCount(Caller user, long eventId) {
+        return service.upcomingEvents(user).stream()
                 .filter(l -> l.event().id() == eventId).findFirst().orElseThrow().myPassengerCount();
     }
 
-    private static long newUser() {
+    private static Caller newUser() {
         String unique = String.valueOf(System.nanoTime());
         User user = new User();
         user.setUsername("bk" + unique);
         user.setEmail("bk_" + unique + "@test.com");
         user.setPassword("x");
         user.setProfileId(clientProfileId);
+        user.setCompanyId(companyId);
         user.setEnabled(true);
         user.setEmailVerified(true);
-        return userRepository.insert(user).getId();
+        return new Caller(userRepository.insert(user).getId(), companyId);
     }
 
     private static CreateBookingRequest request(String... names) {

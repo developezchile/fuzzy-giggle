@@ -13,7 +13,7 @@ import org.viajeseventos.service.UserService;
 
 import java.util.Map;
 
-/** Account administration — every route requires the USERS module. */
+/** Account administration of the caller's own company — every route requires the USERS module. */
 public final class UserController {
 
     private final UserService userService;
@@ -49,35 +49,35 @@ public final class UserController {
 
     private Response list(RequestContext ctx) {
         Map<String, Object> body = Json.obj();
-        body.put("users", userService.findAll().stream().map(UserResponse::from).toList());
+        body.put("users", userService.findAll(ctx.caller().companyId()).stream().map(UserResponse::from).toList());
         return Response.ok(body);
     }
 
     private Response get(RequestContext ctx) {
-        return Response.ok(UserResponse.from(userService.findById(ctx.pathParamLong("id"))));
+        return Response.ok(UserResponse.from(userService.findById(ctx.caller().companyId(), ctx.pathParamLong("id"))));
     }
 
     private Response create(RequestContext ctx) {
-        return Response.created(UserResponse.from(userService.create(CreateUserRequest.fromJson(ctx.jsonBody()))));
+        return Response.created(UserResponse.from(userService.create(ctx.caller().companyId(), CreateUserRequest.fromJson(ctx.jsonBody()))));
     }
 
     private Response update(RequestContext ctx) {
-        long callerId = ctx.requireUserId();
-        var user = userService.update(callerId, ctx.pathParamLong("id"), UpdateUserRequest.fromJson(ctx.jsonBody()));
+        var user = userService.update(ctx.caller(), ctx.pathParamLong("id"), UpdateUserRequest.fromJson(ctx.jsonBody()));
         return Response.ok(UserResponse.from(user));
     }
 
     private Response verifyEmail(RequestContext ctx) {
-        long id = ctx.pathParamLong("id");
+        long companyId = ctx.caller().companyId();
+        long id = userService.findById(companyId, ctx.pathParamLong("id")).getId();
         authService.markEmailVerified(id);
-        return Response.ok(UserResponse.from(userService.findById(id)));
+        return Response.ok(UserResponse.from(userService.findById(companyId, id)));
     }
 
     private Response resendVerification(RequestContext ctx) {
-        long id = ctx.pathParamLong("id");
-        authService.resendVerificationTo(id);
+        var user = userService.findById(ctx.caller().companyId(), ctx.pathParamLong("id"));
+        authService.resendVerificationTo(user.getId());
         Map<String, Object> body = Json.obj();
-        body.put("message", "Enviamos un nuevo enlace de verificación a " + userService.findById(id).getEmail());
+        body.put("message", "Enviamos un nuevo enlace de verificación a " + user.getEmail());
         return Response.ok(body);
     }
 }

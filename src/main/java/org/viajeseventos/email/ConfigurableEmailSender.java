@@ -37,13 +37,13 @@ public final class ConfigurableEmailSender implements EmailSender {
     }
 
     @Override
-    public void send(String to, String subject, String htmlBody) {
+    public void send(String to, String subject, String htmlBody, OnBehalfOf onBehalfOf) {
         SmtpSettings settings = settingsRepository.find().orElse(null);
         if (settings != null && settings.isUsable()) {
-            senderFor(settings).send(to, subject, htmlBody);
+            senderFor(settings).send(to, subject, htmlBody, onBehalfOf);
             return;
         }
-        fallback.send(to, subject, htmlBody);
+        fallback.send(to, subject, htmlBody, onBehalfOf);
     }
 
     private EmailSender senderFor(SmtpSettings settings) {

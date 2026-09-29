@@ -13,14 +13,14 @@ public final class FakeEmailSender implements EmailSender {
 
     private static final Pattern TOKEN_PATTERN = Pattern.compile("[?&]token=([^&\"\\s]+)");
 
-    public record SentEmail(String to, String subject, String htmlBody) {
+    public record SentEmail(String to, String subject, String htmlBody, OnBehalfOf onBehalfOf) {
     }
 
     private final List<SentEmail> sent = new ArrayList<>();
 
     @Override
-    public synchronized void send(String to, String subject, String htmlBody) {
-        sent.add(new SentEmail(to, subject, htmlBody));
+    public synchronized void send(String to, String subject, String htmlBody, OnBehalfOf onBehalfOf) {
+        sent.add(new SentEmail(to, subject, htmlBody, onBehalfOf));
     }
 
     public synchronized SentEmail lastSentTo(String to) {

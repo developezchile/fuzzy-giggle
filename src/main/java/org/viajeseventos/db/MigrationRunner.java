@@ -35,7 +35,9 @@ public final class MigrationRunner {
             "V1__init.sql",
             "V2__auth_tokens.sql",
             "V3__events_bookings.sql",
-            "V4__smtp_settings.sql"
+            "V4__smtp_settings.sql",
+            "V5__companies.sql",
+            "V6__my_bookings_module.sql"
     );
 
     private final ConnectionPool pool;

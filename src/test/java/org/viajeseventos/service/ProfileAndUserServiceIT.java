@@ -6,12 +6,14 @@ import org.viajeseventos.dto.request.ProfileRequest;
 import org.viajeseventos.dto.request.UpdateUserRequest;
 import org.viajeseventos.exception.BusinessRuleException;
 import org.viajeseventos.exception.DuplicateResourceException;
+import org.viajeseventos.exception.ResourceNotFoundException;
 import org.viajeseventos.exception.ValidationException;
 import org.viajeseventos.model.AppModule;
 import org.viajeseventos.model.Profile;
 import org.viajeseventos.model.User;
 import org.viajeseventos.repository.ProfileRepository;
 import org.viajeseventos.repository.UserRepository;
+import org.viajeseventos.security.Caller;
 import org.viajeseventos.security.PasswordEncoder;
 import org.viajeseventos.testsupport.TestDb;
 import org.junit.jupiter.api.AfterAll;
@@ -35,6 +37,7 @@ class ProfileAndUserServiceIT {
     private static UserRepository userRepository;
     private static ProfileService profileService;
     private static UserService userService;
+    private static long companyId;
 
     @BeforeAll
     static void setUp() {
@@ -43,6 +46,7 @@ class ProfileAndUserServiceIT {
         userRepository = new UserRepository(pool);
         profileService = new ProfileService(profileRepository);
         userService = new UserService(userRepository, profileRepository, new PasswordEncoder());
+        companyId = TestDb.seededCompanyId(pool);
     }
 
     @AfterAll
@@ -67,9 +71,27 @@ class ProfileAndUserServiceIT {
         Profile profile = profileService.create(profileRequest(unique("Deshabilitable"), "EVENTS"));
         User user = createUser(profile.getId());
 
-        userService.update(-1, user.getId(), updateRequest(profile.getId(), false));
+        userService.update(someone(), user.getId(), updateRequest(profile.getId(), false));
 
         assertTrue(profileRepository.findModulesByEnabledUserId(user.getId()).isEmpty());
+    }
+
+    @Test
+    void platformModulesCannotBeGrantedThroughAProfile() {
+        Profile sneaky = profileService.create(profileRequest(unique("Colado"), "EVENTS", "PROFILES", "SETTINGS", "COMPANIES"));
+        assertEquals(Set.of(AppModule.EVENTS), sneaky.getModules());
+        assertEquals(Set.of(AppModule.EVENTS), profileRepository.findModulesByEnabledUserId(createUser(sneaky.getId()).getId()));
+    }
+
+    @Test
+    void anotherCompanysUsersAreNotFound() {
+        User mine = createUser(clientProfileId());
+        long otherCompany = TestDb.newCompanyId(pool);
+
+        assertThrows(ResourceNotFoundException.class, () -> userService.findById(otherCompany, mine.getId()));
+        assertThrows(ResourceNotFoundException.class,
+                () -> userService.update(new Caller(-1, otherCompany), mine.getId(), updateRequest(clientProfileId(), false)));
+        assertTrue(userService.findAll(otherCompany).isEmpty());
     }
 
     @Test
@@ -104,7 +126,7 @@ class ProfileAndUserServiceIT {
         User user = createUser(profile.getId());
         assertThrows(BusinessRuleException.class, () -> profileService.delete(profile.getId()));
 
-        userService.update(-1, user.getId(), updateRequest(clientProfileId(), true));
+        userService.update(someone(), user.getId(), updateRequest(clientProfileId(), true));
         profileService.delete(profile.getId());
         assertTrue(profileRepository.findById(profile.getId()).isEmpty());
     }
@@ -115,31 +137,27 @@ class ProfileAndUserServiceIT {
         User user = createUser(clientProfileId());
 
         assertThrows(BusinessRuleException.class,
-                () -> userService.update(user.getId(), user.getId(), updateRequest(clientProfileId(), false)));
+                () -> userService.update(new Caller(user.getId(), companyId), user.getId(), updateRequest(clientProfileId(), false)));
         assertThrows(BusinessRuleException.class,
-                () -> userService.update(user.getId(), user.getId(), updateRequest(other.getId(), true)));
+                () -> userService.update(new Caller(user.getId(), companyId), user.getId(), updateRequest(other.getId(), true)));
     }
 
     @Test
-    void theLastEnabledAdminCannotBeDemotedOrDisabled() {
+    void aCompanysLastEnabledAdminCannotBeDemotedOrDisabled() {
         long adminProfileId = profileRepository.findByCode(Profile.ADMIN).orElseThrow().getId();
-        User lastAdmin = createUser(adminProfileId);
-        // Dedicated test database: leave exactly one enabled admin.
-        for (User u : userRepository.findAll()) {
-            if (u.getProfileId() == adminProfileId && u.isEnabled() && !u.getId().equals(lastAdmin.getId())) {
-                u.setEnabled(false);
-                userRepository.update(u);
-            }
-        }
+        // A fresh company: its only admin, whatever other companies have.
+        long company = TestDb.newCompanyId(pool);
+        Caller someone = new Caller(-1, company);
+        User lastAdmin = createUser(company, adminProfileId);
 
         assertThrows(BusinessRuleException.class,
-                () -> userService.update(-1, lastAdmin.getId(), updateRequest(adminProfileId, false)));
+                () -> userService.update(someone, lastAdmin.getId(), updateRequest(adminProfileId, false)));
         assertThrows(BusinessRuleException.class,
-                () -> userService.update(-1, lastAdmin.getId(), updateRequest(clientProfileId(), true)));
+                () -> userService.update(someone, lastAdmin.getId(), updateRequest(clientProfileId(), true)));
 
         // A second admin makes demoting the first one fine.
-        createUser(adminProfileId);
-        userService.update(-1, lastAdmin.getId(), updateRequest(clientProfileId(), true));
+        createUser(company, adminProfileId);
+        userService.update(someone, lastAdmin.getId(), updateRequest(clientProfileId(), true));
     }
 
     // ---- helpers ----
@@ -156,9 +174,18 @@ class ProfileAndUserServiceIT {
         return profileRepository.findByCode(Profile.CLIENT).orElseThrow().getId();
     }
 
+    /** An administrator of the seeded company other than the accounts under test. */
+    private static Caller someone() {
+        return new Caller(-1, companyId);
+    }
+
     private static User createUser(long profileId) {
+        return createUser(companyId, profileId);
+    }
+
+    private static User createUser(long company, long profileId) {
         String unique = String.valueOf(System.nanoTime());
-        return userService.create(CreateUserRequest.fromJson(Map.of(
+        return userService.create(company, CreateUserRequest.fromJson(Map.of(
                 "username", "it" + unique, "email", "it_" + unique + "@test.com",
                 "password", "Password123!", "profileId", (double) profileId)));
     }

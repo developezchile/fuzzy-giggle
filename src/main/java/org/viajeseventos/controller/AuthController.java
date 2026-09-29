@@ -3,7 +3,9 @@ package org.viajeseventos.controller;
 import org.viajeseventos.dto.request.AuthRequest;
 import org.viajeseventos.dto.request.ChangePasswordRequest;
 import org.viajeseventos.dto.request.ForgotPasswordRequest;
+import org.viajeseventos.dto.request.RegisterCompanyRequest;
 import org.viajeseventos.dto.request.RegisterRequest;
+import org.viajeseventos.dto.response.CompanyResponse;
 import org.viajeseventos.dto.request.ResendVerificationRequest;
 import org.viajeseventos.dto.request.ResetPasswordRequest;
 import org.viajeseventos.dto.request.UpdateMeRequest;
@@ -30,6 +32,7 @@ public final class AuthController {
 
     public void register(Router router) {
         router.post("/auth/register", this::registerUser);
+        router.post("/auth/register-company", this::registerCompany);
         router.post("/auth/login", this::login);
         router.post("/auth/verify-email", this::verifyEmail);
         router.post("/auth/resend-verification", this::resendVerification);
@@ -46,6 +49,14 @@ public final class AuthController {
         RegisterRequest request = RegisterRequest.fromJson(ctx.jsonBody());
         authService.register(request);
         return Response.created(message("Cuenta creada correctamente. Revisa tu correo electrónico para verificar tu cuenta antes de iniciar sesión."));
+    }
+
+    private Response registerCompany(RequestContext ctx) {
+        limit(ctx, "register");
+        var company = authService.registerCompany(RegisterCompanyRequest.fromJson(ctx.jsonBody()));
+        Map<String, Object> body = message("Empresa creada correctamente. Revisa tu correo electrónico para verificar tu cuenta antes de iniciar sesión.");
+        body.put("company", CompanyResponse.publicView(company));
+        return Response.created(body);
     }
 
     private Response login(RequestContext ctx) {

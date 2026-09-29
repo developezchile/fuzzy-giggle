@@ -1,11 +1,17 @@
 package org.viajeseventos.service;
 
+import org.viajeseventos.AdminBootstrap;
 import org.viajeseventos.db.ConnectionPool;
 import org.viajeseventos.dto.request.AuthRequest;
+import org.viajeseventos.dto.request.RegisterCompanyRequest;
 import org.viajeseventos.dto.request.RegisterRequest;
 import org.viajeseventos.dto.response.AuthResponse;
 import org.viajeseventos.exception.BusinessRuleException;
 import org.viajeseventos.exception.DuplicateResourceException;
+import org.viajeseventos.exception.ResourceNotFoundException;
+import org.viajeseventos.exception.UnauthorizedException;
+import org.viajeseventos.model.Company;
+import org.viajeseventos.repository.CompanyRepository;
 import org.viajeseventos.repository.EmailVerificationTokenRepository;
 import org.viajeseventos.repository.PasswordResetTokenRepository;
 import org.viajeseventos.repository.ProfileRepository;
@@ -33,15 +39,19 @@ class AuthServiceIT {
     private static AuthService authService;
     private static FakeEmailSender emailSender;
     private static UserRepository userRepository;
+    private static CompanyRepository companyRepository;
 
     @BeforeAll
     static void setUp() {
         pool = TestDb.pool();
         userRepository = new UserRepository(pool);
+        companyRepository = new CompanyRepository(pool);
+        // As at app startup: ADMIN gets every profile module (and a platform admin exists).
+        AdminBootstrap.run(new ProfileRepository(pool), userRepository, companyRepository, new PasswordEncoder());
         EmailVerificationTokenRepository evtRepo = new EmailVerificationTokenRepository(pool);
         PasswordResetTokenRepository prtRepo = new PasswordResetTokenRepository(pool);
         emailSender = new FakeEmailSender();
-        authService = new AuthService(userRepository, new ProfileRepository(pool), evtRepo, prtRepo, new PasswordEncoder(),
+        authService = new AuthService(userRepository, new ProfileRepository(pool), companyRepository, evtRepo, prtRepo, new PasswordEncoder(),
                 new JwtService("dGVzdC1zZWNyZXQta2V5LWZvci1qdW5pdC10ZXN0cy1vbmx5", 3_600_000), emailSender,
                 "http://localhost:3000");
     }
@@ -53,7 +63,86 @@ class AuthServiceIT {
 
     private RegisterRequest registerRequest(String username, String email) {
         return RegisterRequest.fromJson(Map.of(
-                "username", username, "email", email, "password", "Password123!"));
+                "username", username, "email", email, "password", "Password123!", "company", "viajes-eventos"));
+    }
+
+    private RegisterCompanyRequest registerCompanyRequest(String companyName, String email) {
+        return RegisterCompanyRequest.fromJson(Map.of("companyName", companyName,
+                "username", "co" + suffix(email), "email", email, "password", "Password123!"));
+    }
+
+    private AuthResponse verifyAndLogin(String email) {
+        authService.verifyEmail(emailSender.lastTokenSentTo(email));
+        return authService.authenticate(AuthRequest.fromJson(Map.of("email", email, "password", "Password123!")));
+    }
+
+    @Test
+    void aSignedUpCompanyGetsItsAdministratorAndItsOwnRegistrationLink() {
+        String email = uniqueEmail("company");
+        String name = "Buses López " + System.nanoTime();
+        Company company = authService.registerCompany(registerCompanyRequest(name, email));
+
+        assertTrue(company.slug().startsWith("buses-lopez-"), company.slug());
+        assertEquals(email, company.contactEmail());
+        // The verification email goes out in the company's name, replies to it.
+        assertEquals(name, emailSender.lastSentTo(email).onBehalfOf().name());
+        assertEquals(email, emailSender.lastSentTo(email).onBehalfOf().replyTo());
+
+        AuthResponse admin = verifyAndLogin(email);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> profile = (Map<String, Object>) admin.user.get("profile");
+        assertEquals("ADMIN", profile.get("code"));
+        @SuppressWarnings("unchecked")
+        java.util.List<String> modules = (java.util.List<String>) admin.user.get("modules");
+        assertTrue(modules.containsAll(java.util.List.of("EVENTS", "BOOKINGS", "EVENT_ADMIN", "USERS", "COMPANY")));
+        // A company administrator is not the platform's: no profiles, SMTP or companies list.
+        assertFalse(modules.contains("PROFILES") || modules.contains("SETTINGS") || modules.contains("COMPANIES"));
+        // Administrators don't book trips (for now).
+        assertFalse(modules.contains("MY_BOOKINGS"));
+
+        // Clients registering through the link land in that company.
+        String clientEmail = uniqueEmail("companyclient");
+        authService.register(RegisterRequest.fromJson(Map.of("username", "cc" + suffix(clientEmail),
+                "email", clientEmail, "password", "Password123!", "company", company.slug())));
+        assertEquals(company.id(), userRepository.findByEmail(clientEmail).orElseThrow().getCompanyId());
+    }
+
+    @Test
+    void aTakenCompanyLinkIsRejected() {
+        String slug = "link-" + System.nanoTime();
+        authService.registerCompany(RegisterCompanyRequest.fromJson(Map.of("companyName", "Uno", "companySlug", slug,
+                "username", "u1" + slug, "email", uniqueEmail("slug1"), "password", "Password123!")));
+        assertThrows(DuplicateResourceException.class, () -> authService.registerCompany(RegisterCompanyRequest.fromJson(
+                Map.of("companyName", "Dos", "companySlug", slug,
+                        "username", "u2" + slug, "email", uniqueEmail("slug2"), "password", "Password123!"))));
+    }
+
+    @Test
+    void registeringThroughAnUnknownOrDisabledCompanyLinkFails() {
+        String email = uniqueEmail("nolink");
+        assertThrows(ResourceNotFoundException.class, () -> authService.register(RegisterRequest.fromJson(Map.of(
+                "username", "nl" + suffix(email), "email", email, "password", "Password123!", "company", "no-existe-xyz"))));
+
+        long disabled = TestDb.newCompanyId(pool);
+        companyRepository.setActive(disabled, false);
+        String slug = companyRepository.findById(disabled).orElseThrow().slug();
+        assertThrows(ResourceNotFoundException.class, () -> authService.register(RegisterRequest.fromJson(Map.of(
+                "username", "nl" + suffix(email), "email", email, "password", "Password123!", "company", slug))));
+    }
+
+    @Test
+    void disablingACompanyLocksItsAccountsOut() {
+        String email = uniqueEmail("locked");
+        Company company = authService.registerCompany(registerCompanyRequest("Bloqueada " + System.nanoTime(), email));
+        verifyAndLogin(email);
+
+        companyRepository.setActive(company.id(), false);
+
+        AuthRequest login = AuthRequest.fromJson(Map.of("email", email, "password", "Password123!"));
+        assertTrue(assertThrows(BusinessRuleException.class, () -> authService.authenticate(login))
+                .getMessage().contains("empresa"));
+        long userId = userRepository.findByEmail(email).orElseThrow().getId();
+        assertThrows(UnauthorizedException.class, () -> authService.me(userId));
     }
 
     @Test
@@ -91,7 +180,7 @@ class AuthServiceIT {
         @SuppressWarnings("unchecked")
         Map<String, Object> profile = (Map<String, Object>) response.user.get("profile");
         assertEquals("CLIENT", profile.get("code"));
-        assertEquals(java.util.List.of("EVENTS"), response.user.get("modules"));
+        assertEquals(java.util.List.of("EVENTS", "MY_BOOKINGS"), response.user.get("modules"));
     }
 
     @Test

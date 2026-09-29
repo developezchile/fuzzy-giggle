@@ -4,6 +4,7 @@ import org.viajeseventos.config.AppConfig;
 import org.viajeseventos.config.Env;
 import org.viajeseventos.db.ConnectionPool;
 import org.viajeseventos.db.MigrationRunner;
+import org.viajeseventos.repository.CompanyRepository;
 
 /**
  * Integration tests (suffix {@code IT}) run against a real local Postgres — no mocking the
@@ -23,5 +24,16 @@ public final class TestDb {
         ConnectionPool pool = new ConnectionPool(url, config.dbUsername, config.dbPassword, 5);
         new MigrationRunner(pool).migrate();
         return pool;
+    }
+
+    /** The company V5__companies.sql seeds, owner of the seeded events. */
+    public static long seededCompanyId(ConnectionPool pool) {
+        return new CompanyRepository(pool).findBySlug("viajes-eventos").orElseThrow().id();
+    }
+
+    /** A fresh, empty company — for tests that check one company can't see another's data. */
+    public static long newCompanyId(ConnectionPool pool) {
+        String unique = String.valueOf(System.nanoTime());
+        return new CompanyRepository(pool).insert("Empresa " + unique, "empresa-" + unique, null);
     }
 }

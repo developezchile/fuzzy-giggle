@@ -11,11 +11,35 @@ Backend de viajes en bus a eventos. Java 25 nativo, sin Spring. Usa la misma arq
 
 Dependencias de runtime: driver de PostgreSQL, `at.favre.lib:bcrypt` y Jakarta Mail (SMTP).
 
+## Empresas (multiempresa)
+
+La plataforma la usan varias empresas de transporte, cada una con sus propios administradores, clientes y eventos
+(tabla `companies`, `V5__companies.sql`):
+
+- **Cada usuario y cada evento pertenece a una empresa** (`users.company_id`, `events.company_id`). Las rutas con
+  módulo reciben un `Caller` (usuario + empresa) y todo lo que leen o escriben queda filtrado a esa empresa. Un evento
+  o usuario de otra empresa responde 404, igual que uno que no existe.
+- **Las empresas se registran solas** en `POST /auth/register-company` (la UI está en `/signup`). Se crea la empresa y
+  su primer administrador con perfil `ADMIN`.
+- **Los clientes se registran con el link de su empresa**, `/empresa/<slug>` en la UI (`POST /auth/register` con
+  `company`). Quedan como `CLIENT` de esa empresa y solo ven sus eventos. El slug no cambia después de creado.
+- El login es por correo, y el correo es único en toda la plataforma. Si una persona es cliente de dos empresas,
+  necesita dos correos.
+- **Correo:** hay un solo SMTP para toda la plataforma. Cada correo sale con el nombre de la empresa como remitente y
+  su correo de contacto como Reply-To.
+- **Dueño de la plataforma:** las cuentas con `users.platform_admin` reciben además los módulos de plataforma,
+  `PROFILES`, `SETTINGS` y `COMPANIES`. Esos módulos nunca se otorgan por perfil, porque los perfiles son compartidos
+  y un administrador de empresa podría dárselos. La migración marca como dueño a los administradores que ya existían.
+  `AdminBootstrap` crea uno solo si no hay ninguno.
+- Si el dueño deshabilita una empresa, ninguna de sus cuentas puede entrar y su link deja de funcionar. Los datos se
+  conservan.
+
 ## Perfiles y módulos (patrón de condominios)
 
 El acceso no está programado por rol, se maneja como datos:
 
-- `AppModule` (enum) lista las áreas funcionales: `EVENTS`, `BOOKINGS`, `EVENT_ADMIN`, `USERS`, `PROFILES`, `SETTINGS`.
+- `AppModule` (enum) lista las áreas funcionales: `EVENTS`, `MY_BOOKINGS`, `BOOKINGS`, `EVENT_ADMIN`, `USERS`, `COMPANY`, y las de
+  plataforma `PROFILES`, `SETTINGS` y `COMPANIES` (ver [Empresas](#empresas-multiempresa)).
 - Un **perfil** (`profiles` + `profile_modules`) habilita un conjunto de módulos. Cada usuario tiene exactamente un perfil (`users.profile_id`).
 - Cada ruta se registra con su módulo: `router.get("/users", AppModule.USERS, handler)`. Antes de ejecutar el
   handler, el `Router` llama a `ModuleAccess`, que es el equivalente al `@RequiresModule` + `ModuleAccessInterceptor`
@@ -28,15 +52,20 @@ Perfiles del sistema (se crean en `V1__init.sql`):
 
 | Perfil | Código | Módulos | Reglas |
 |---|---|---|---|
-| Administrador | `ADMIN` | todos | Siempre tiene todos los módulos. Al arrancar se le agregan los módulos nuevos. No se puede eliminar. |
-| Cliente | `CLIENT` | `EVENTS` | El registro público siempre asigna este perfil. Sus módulos se pueden editar. No se puede eliminar. |
+| Administrador | `ADMIN` | todos los de empresa menos `MY_BOOKINGS` | Por ahora el administrador no reserva viajes (`AppModule.adminModules()`). Al arrancar se le agregan los módulos nuevos. No se puede eliminar. |
+| Cliente | `CLIENT` | `EVENTS`, `MY_BOOKINGS` | El registro con el link de la empresa siempre asigna este perfil. Sus módulos se pueden editar. No se puede eliminar. |
 
 Desde el mantenedor se pueden crear más perfiles, por ejemplo "Coordinador" con `EVENTS` + `USERS`.
 
 Además hay estas protecciones:
 - No se puede eliminar un perfil que tenga usuarios asignados.
 - Nadie puede deshabilitarse ni cambiarse el perfil a sí mismo.
-- Siempre debe quedar al menos un administrador habilitado.
+- Cada empresa debe tener siempre al menos un administrador habilitado.
+
+**Módulos deshabilitados por ahora:** `COMPANY`, `PROFILES`, `SETTINGS` y `COMPANIES` (`AppModule.DISABLED`).
+`ModuleAccess` responde 403 en sus rutas a todos, tenga el perfil que tenga, y la UI oculta sus páginas. Los tendrá un
+super admin en una versión futura. Las rutas públicas (`/companies/public/{slug}`, `/auth/register-company`) siguen
+funcionando.
 
 **Agregar un módulo:** súmalo a `AppModule`, registra sus rutas con él y agrega su entrada en `ui/src/lib/modules.ts`
 y en `ModuleKey`.
@@ -45,12 +74,17 @@ y en `ModuleKey`.
 
 | Método | Ruta | Acceso |
 |---|---|---|
-| POST | `/auth/register`, `/auth/login`, `/auth/verify-email`, `/auth/resend-verification`, `/auth/forgot-password`, `/auth/reset-password` | público (con límite de intentos) |
+| POST | `/auth/register-company` | público — registrar una empresa y su administrador |
+| POST | `/auth/register` (con `company`), `/auth/login`, `/auth/verify-email`, `/auth/resend-verification`, `/auth/forgot-password`, `/auth/reset-password` | público (con límite de intentos) |
+| GET | `/companies/public/{slug}` | público — nombre de la empresa del link de registro |
+| GET / PUT | `/company` | `COMPANY` — mi empresa (nombre, correo de contacto) |
+| GET | `/companies` | `COMPANIES` — todas las empresas (plataforma) |
+| PATCH | `/companies/{id}` | `COMPANIES` — habilitar o deshabilitar |
 | GET / PUT | `/auth/me` | sesión (mi perfil) |
 | GET | `/events` | `EVENTS` — eventos próximos + cuántos pasajeros tengo en cada uno |
-| POST | `/events/{id}/bookings` | `EVENTS` — reservar (1 a 20 pasajeros) |
-| GET | `/bookings/me` | `EVENTS` — mis reservas |
-| POST | `/bookings/{id}/cancel` | `EVENTS` — cancelar una reserva propia |
+| POST | `/events/{id}/bookings` | `MY_BOOKINGS` — reservar (1 a 20 pasajeros) |
+| GET | `/bookings/me` | `MY_BOOKINGS` — mis reservas |
+| POST | `/bookings/{id}/cancel` | `MY_BOOKINGS` — cancelar una reserva propia |
 | GET | `/admin/bookings/events`, `/admin/bookings?eventId=` | `BOOKINGS` — todas las reservas y pasajeros |
 | GET / POST | `/admin/events` | `EVENT_ADMIN` — todos los eventos (con reservas y pasajeros) / crear |
 | GET / PUT / DELETE | `/admin/events/{id}` | `EVENT_ADMIN` |
@@ -103,8 +137,9 @@ comas, igual que en condominios. Los `/` finales se quitan solos.
 `NEXT_PUBLIC_API_URL` debe estar definida en Render: el build de producción falla si falta, o si en Render apunta a
 `localhost` (ver `ui/next.config.ts`).
 
-En el primer arranque `AdminBootstrap` crea `admin@viajeseventos.local`. Usa `ADMIN_BOOTSTRAP_PASSWORD` si está
-definida. Si no, genera una contraseña y la muestra una sola vez en el log.
+Si no hay ningún dueño de la plataforma, `AdminBootstrap` crea `admin@viajeseventos.local` en la empresa inicial
+(`viajes-eventos`). Usa `ADMIN_BOOTSTRAP_PASSWORD` si está definida. Si no, genera una contraseña y la muestra una sola
+vez en el log.
 
 ### Correo (SMTP)
 

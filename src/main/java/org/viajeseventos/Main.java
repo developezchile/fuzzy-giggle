@@ -3,6 +3,7 @@ package org.viajeseventos;
 import org.viajeseventos.config.AppConfig;
 import org.viajeseventos.controller.AuthController;
 import org.viajeseventos.controller.BookingController;
+import org.viajeseventos.controller.CompanyController;
 import org.viajeseventos.controller.EventAdminController;
 import org.viajeseventos.controller.HealthController;
 import org.viajeseventos.controller.ProfileController;
@@ -18,6 +19,7 @@ import org.viajeseventos.http.Router;
 import org.viajeseventos.log.LogManager;
 import org.viajeseventos.log.Logger;
 import org.viajeseventos.repository.BookingRepository;
+import org.viajeseventos.repository.CompanyRepository;
 import org.viajeseventos.repository.EmailVerificationTokenRepository;
 import org.viajeseventos.repository.EventRepository;
 import org.viajeseventos.repository.PasswordResetTokenRepository;
@@ -30,6 +32,7 @@ import org.viajeseventos.security.PasswordEncoder;
 import org.viajeseventos.security.RateLimiter;
 import org.viajeseventos.service.AuthService;
 import org.viajeseventos.service.BookingService;
+import org.viajeseventos.service.CompanyService;
 import org.viajeseventos.service.EventService;
 import org.viajeseventos.service.ProfileService;
 import org.viajeseventos.service.SmtpSettingsService;
@@ -46,8 +49,9 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * Entry point. Wires controller -> service -> repository by hand (no DI framework) and starts a
- * plain JDK {@link HttpServer}. Covers auth (register/login/email verification/password reset),
- * events and bus bookings, the profile maintainer and account administration — access to each feature is granted per
+ * plain JDK {@link HttpServer}. Multi-company: each transport company has its own administrators,
+ * clients and events. Covers auth (company sign-up, client sign-up through the company's link,
+ * login/email verification/password reset), events and bus bookings, the profile maintainer and account administration — access to each feature is granted per
  * profile through modules (condominios' pattern) — mirroring the "library-free" architecture proven in dc-api-v2: no
  * Spring/Jackson/Hibernate/JJWT, just the JDK standard library plus a JDBC driver, a small
  * bcrypt implementation, and Jakarta Mail for SMTP.
@@ -65,12 +69,13 @@ public final class Main {
         new MigrationRunner(pool).migrate();
 
         ProfileRepository profileRepository = new ProfileRepository(pool);
+        CompanyRepository companyRepository = new CompanyRepository(pool);
         UserRepository userRepository = new UserRepository(pool);
         EmailVerificationTokenRepository emailVerificationTokenRepository = new EmailVerificationTokenRepository(pool);
         PasswordResetTokenRepository passwordResetTokenRepository = new PasswordResetTokenRepository(pool);
 
         PasswordEncoder passwordEncoder = new PasswordEncoder();
-        AdminBootstrap.run(profileRepository, userRepository, passwordEncoder);
+        AdminBootstrap.run(profileRepository, userRepository, companyRepository, passwordEncoder);
 
         JwtService jwtService = new JwtService(config.jwtSecret, config.jwtExpirationMs);
 
@@ -85,7 +90,7 @@ public final class Main {
 
         RateLimiter authRateLimiter = new RateLimiter(config.rateLimitMaxRequests, config.rateLimitWindowMs);
 
-        AuthService authService = new AuthService(userRepository, profileRepository, emailVerificationTokenRepository,
+        AuthService authService = new AuthService(userRepository, profileRepository, companyRepository, emailVerificationTokenRepository,
                 passwordResetTokenRepository, passwordEncoder, jwtService, emailSender, config.frontendUrl);
         AuthController authController = new AuthController(authService, authRateLimiter);
 
@@ -100,6 +105,7 @@ public final class Main {
                 Clock.system(ZoneId.of("America/Santiago")));
         BookingController bookingController = new BookingController(bookingService);
         EventAdminController eventAdminController = new EventAdminController(new EventService(eventRepository));
+        CompanyController companyController = new CompanyController(new CompanyService(companyRepository));
         UserController userController = new UserController(
                 new UserService(userRepository, profileRepository, passwordEncoder), authService);
 
@@ -116,6 +122,7 @@ public final class Main {
         eventAdminController.register(router);
         profileController.register(router);
         userController.register(router);
+        companyController.register(router);
         smtpSettingsController.register(router);
 
         ScheduledExecutorService rateLimiterCleanup = Executors.newSingleThreadScheduledExecutor(

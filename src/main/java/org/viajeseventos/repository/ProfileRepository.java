@@ -93,26 +93,45 @@ public final class ProfileRepository {
         }
     }
 
+    /** What an enabled account may do, and which company it acts for. */
+    public record Access(long companyId, Set<AppModule> modules) {
+    }
+
     /**
-     * The modules an <em>enabled</em> user's profile grants — empty for a disabled or unknown user.
-     * Read fresh on every module-gated request (see {@code ModuleAccess}), so a profile edit, a
-     * profile reassignment or disabling an account takes effect immediately, not at token expiry.
+     * The modules an <em>enabled</em> user has — empty for a disabled or unknown user. Read fresh on
+     * every module-gated request (see {@code ModuleAccess}), so a profile edit, a profile
+     * reassignment, disabling an account or its company takes effect immediately, not at token expiry.
+     * The profile's modules count only while the company is active; platform modules come from the
+     * account's {@code platform_admin} flag, never from the profile.
      */
     public Set<AppModule> findModulesByEnabledUserId(long userId) {
+        return findAccessByEnabledUserId(userId).map(Access::modules).orElse(EnumSet.noneOf(AppModule.class));
+    }
+
+    public Optional<Access> findAccessByEnabledUserId(long userId) {
         Connection conn = pool.borrow();
         try (PreparedStatement ps = conn.prepareStatement("""
-                SELECT pm.module_key
+                SELECT u.company_id, u.platform_admin, c.active AS company_active, pm.module_key
                 FROM users u
-                JOIN profile_modules pm ON pm.profile_id = u.profile_id
+                JOIN companies c ON c.id = u.company_id
+                LEFT JOIN profile_modules pm ON pm.profile_id = u.profile_id
                 WHERE u.id = ? AND u.enabled
                 """)) {
             ps.setLong(1, userId);
             try (ResultSet rs = ps.executeQuery()) {
+                Long companyId = null;
                 Set<AppModule> modules = EnumSet.noneOf(AppModule.class);
                 while (rs.next()) {
-                    AppModule.fromKey(rs.getString("module_key")).ifPresent(modules::add);
+                    companyId = rs.getLong("company_id");
+                    if (rs.getBoolean("platform_admin")) {
+                        modules.addAll(AppModule.platformModules());
+                    }
+                    String key = rs.getString("module_key");
+                    if (key != null && rs.getBoolean("company_active")) {
+                        AppModule.fromKey(key).filter(m -> !m.platform()).ifPresent(modules::add);
+                    }
                 }
-                return modules;
+                return companyId == null ? Optional.empty() : Optional.of(new Access(companyId, modules));
             }
         } catch (SQLException e) {
             throw new RuntimeException("Failed to query user modules", e);

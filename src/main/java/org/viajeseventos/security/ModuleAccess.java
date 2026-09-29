@@ -20,12 +20,16 @@ public final class ModuleAccess {
         this.profileRepository = profileRepository;
     }
 
-    /** Returns the authenticated user id, or throws 401 (no/invalid token) / 403 (module not granted). */
-    public long require(RequestContext ctx, AppModule module) {
+    /** Returns the caller, or throws 401 (no/invalid token) / 403 (module disabled or not granted). */
+    public Caller require(RequestContext ctx, AppModule module) {
         long userId = ctx.requireUserId();
-        if (!profileRepository.findModulesByEnabledUserId(userId).contains(module)) {
+        if (module.disabled()) {
+            throw new ForbiddenException("El módulo " + module.label() + " no está disponible");
+        }
+        ProfileRepository.Access access = profileRepository.findAccessByEnabledUserId(userId).orElse(null);
+        if (access == null || !access.modules().contains(module)) {
             throw new ForbiddenException("Tu perfil no tiene acceso al módulo " + module.label());
         }
-        return userId;
+        return new Caller(userId, access.companyId());
     }
 }

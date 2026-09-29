@@ -31,6 +31,12 @@ public final class UserResponse {
         profile.put("code", user.getProfileCode());
         profile.put("name", user.getProfileName());
         map.put("profile", profile);
+
+        Map<String, Object> company = Json.obj();
+        company.put("id", user.getCompanyId());
+        company.put("name", user.getCompanyName());
+        company.put("slug", user.getCompanySlug());
+        map.put("company", company);
         return map;
     }
 

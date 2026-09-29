@@ -9,7 +9,6 @@ import org.viajeseventos.json.Json;
 import org.viajeseventos.model.AppModule;
 import org.viajeseventos.service.ProfileService;
 
-import java.util.Arrays;
 import java.util.Map;
 
 /** Profile maintainer — every route requires the PROFILES module. */
@@ -33,7 +32,7 @@ public final class ProfileController {
 
     private Response modules(RequestContext ctx) {
         Map<String, Object> body = Json.obj();
-        body.put("modules", Arrays.stream(AppModule.values()).map(ProfileResponse::module).toList());
+        body.put("modules", AppModule.profileModules().stream().map(ProfileResponse::module).toList());
         return Response.ok(body);
     }
 

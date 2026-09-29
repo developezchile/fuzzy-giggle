@@ -9,6 +9,7 @@ import org.viajeseventos.model.BookingStatus;
 import org.viajeseventos.model.Event;
 import org.viajeseventos.repository.BookingRepository;
 import org.viajeseventos.repository.EventRepository;
+import org.viajeseventos.security.Caller;
 
 import java.time.Clock;
 import java.time.LocalDate;
@@ -31,22 +32,23 @@ public final class BookingService {
         this.clock = clock;
     }
 
-    public List<EventRepository.Listing> upcomingEvents(long userId) {
-        return eventRepository.findUpcoming(userId, today());
+    public List<EventRepository.Listing> upcomingEvents(Caller caller) {
+        return eventRepository.findUpcoming(caller.companyId(), caller.userId(), today());
     }
 
-    public List<Event> allEvents() {
-        return eventRepository.findAll();
+    public List<Event> allEvents(long companyId) {
+        return eventRepository.findAll(companyId);
     }
 
-    public Booking create(long userId, long eventId, CreateBookingRequest request) {
-        Event event = eventRepository.findById(eventId)
+    /** Only the caller's own company's events can be booked. */
+    public Booking create(Caller caller, long eventId, CreateBookingRequest request) {
+        Event event = eventRepository.findById(caller.companyId(), eventId)
                 .filter(Event::active)
                 .orElseThrow(() -> new ResourceNotFoundException("Evento no encontrado"));
         if (event.hasEnded(today())) {
             throw new BusinessRuleException("El evento ya finalizó, no se pueden registrar viajes");
         }
-        long bookingId = bookingRepository.insert(event.id(), userId, request.passengers);
+        long bookingId = bookingRepository.insert(event.id(), caller.userId(), request.passengers);
         return bookingRepository.findById(bookingId).orElseThrow();
     }
 
@@ -71,8 +73,8 @@ public final class BookingService {
         return bookingRepository.findById(bookingId).orElseThrow();
     }
 
-    public List<Booking> allBookings(Long eventId) {
-        return bookingRepository.findAll(eventId);
+    public List<Booking> allBookings(long companyId, Long eventId) {
+        return bookingRepository.findAll(companyId, eventId);
     }
 
     private LocalDate today() {

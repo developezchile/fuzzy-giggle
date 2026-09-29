@@ -13,7 +13,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
-/** Plain JDBC access to {@code events}. */
+/** Plain JDBC access to {@code events}. Every query takes the company it's scoped to. */
 public final class EventRepository {
 
     /** Any event plus its booking totals — for the EVENT_ADMIN list. */
@@ -30,21 +30,22 @@ public final class EventRepository {
         this.pool = pool;
     }
 
-    /** Active events that haven't ended, soonest first. */
-    public List<Listing> findUpcoming(long userId, LocalDate today) {
+    /** The company's active events that haven't ended, soonest first. */
+    public List<Listing> findUpcoming(long companyId, long userId, LocalDate today) {
         String sql = """
                 SELECT e.*,
                        (SELECT COUNT(*) FROM booking_passengers bp
                           JOIN bookings b ON b.id = bp.booking_id
                          WHERE b.event_id = e.id AND b.user_id = ? AND b.status = 'CONFIRMED') AS my_passengers
                 FROM events e
-                WHERE e.active AND COALESCE(e.end_date, e.start_date) >= ?
+                WHERE e.company_id = ? AND e.active AND COALESCE(e.end_date, e.start_date) >= ?
                 ORDER BY e.start_date, e.name
                 """;
         Connection conn = pool.borrow();
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setLong(1, userId);
-            ps.setDate(2, Date.valueOf(today));
+            ps.setLong(2, companyId);
+            ps.setDate(3, Date.valueOf(today));
             try (ResultSet rs = ps.executeQuery()) {
                 List<Listing> listings = new ArrayList<>();
                 while (rs.next()) {
@@ -59,14 +60,16 @@ public final class EventRepository {
         }
     }
 
-    /** Every event, past included — for the admin's filter. */
-    public List<Event> findAll() {
+    /** Every event of the company, past included — for the admin's filter. */
+    public List<Event> findAll(long companyId) {
         Connection conn = pool.borrow();
-        try (PreparedStatement ps = conn.prepareStatement("SELECT * FROM events ORDER BY start_date, name");
-             ResultSet rs = ps.executeQuery()) {
+        try (PreparedStatement ps = conn.prepareStatement("SELECT * FROM events WHERE company_id = ? ORDER BY start_date, name")) {
+            ps.setLong(1, companyId);
             List<Event> events = new ArrayList<>();
-            while (rs.next()) {
-                events.add(mapRow(rs));
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    events.add(mapRow(rs));
+                }
             }
             return events;
         } catch (SQLException e) {
@@ -77,20 +80,24 @@ public final class EventRepository {
     }
 
     /** Every event (inactive and past included) with its bookings, newest dates first. */
-    public List<AdminListing> findAllForAdmin() {
+    public List<AdminListing> findAllForAdmin(long companyId) {
         String sql = """
                 SELECT e.*,
                        (SELECT COUNT(*) FROM bookings b WHERE b.event_id = e.id) AS booking_count,
                        (SELECT COUNT(*) FROM booking_passengers bp JOIN bookings b ON b.id = bp.booking_id
                          WHERE b.event_id = e.id AND b.status = 'CONFIRMED') AS confirmed_passengers
                 FROM events e
+                WHERE e.company_id = ?
                 ORDER BY e.start_date DESC, e.name
                 """;
         Connection conn = pool.borrow();
-        try (PreparedStatement ps = conn.prepareStatement(sql); ResultSet rs = ps.executeQuery()) {
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, companyId);
             List<AdminListing> listings = new ArrayList<>();
-            while (rs.next()) {
-                listings.add(new AdminListing(mapRow(rs), rs.getInt("booking_count"), rs.getInt("confirmed_passengers")));
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    listings.add(new AdminListing(mapRow(rs), rs.getInt("booking_count"), rs.getInt("confirmed_passengers")));
+                }
             }
             return listings;
         } catch (SQLException e) {
@@ -100,10 +107,11 @@ public final class EventRepository {
         }
     }
 
-    public boolean existsBySlug(String slug) {
+    public boolean existsBySlug(long companyId, String slug) {
         Connection conn = pool.borrow();
-        try (PreparedStatement ps = conn.prepareStatement("SELECT 1 FROM events WHERE slug = ?")) {
-            ps.setString(1, slug);
+        try (PreparedStatement ps = conn.prepareStatement("SELECT 1 FROM events WHERE company_id = ? AND slug = ?")) {
+            ps.setLong(1, companyId);
+            ps.setString(2, slug);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next();
             }
@@ -129,14 +137,16 @@ public final class EventRepository {
         }
     }
 
-    public long insert(Event event) {
+    public long insert(long companyId, Event event) {
         String sql = """
-                INSERT INTO events (slug, name, venue, commune, category, image_url, start_date, end_date, source_url, active)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO events (slug, name, venue, commune, category, image_url, start_date, end_date, source_url, active,
+                                    company_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """;
         Connection conn = pool.borrow();
         try (PreparedStatement ps = conn.prepareStatement(sql, java.sql.Statement.RETURN_GENERATED_KEYS)) {
             bind(ps, event);
+            ps.setLong(11, companyId);
             ps.executeUpdate();
             try (ResultSet keys = ps.getGeneratedKeys()) {
                 keys.next();
@@ -150,11 +160,11 @@ public final class EventRepository {
     }
 
     /** The slug is fixed at creation (it's the event's stable identifier), so it isn't updated. */
-    public void update(Event event) {
+    public void update(long companyId, Event event) {
         String sql = """
                 UPDATE events SET name = ?, venue = ?, commune = ?, category = ?, image_url = ?,
                                   start_date = ?, end_date = ?, source_url = ?, active = ?
-                WHERE id = ?
+                WHERE id = ? AND company_id = ?
                 """;
         Connection conn = pool.borrow();
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -168,6 +178,7 @@ public final class EventRepository {
             ps.setString(8, event.sourceUrl());
             ps.setBoolean(9, event.active());
             ps.setLong(10, event.id());
+            ps.setLong(11, companyId);
             ps.executeUpdate();
         } catch (SQLException e) {
             throw new RuntimeException("Failed to update event", e);
@@ -176,10 +187,11 @@ public final class EventRepository {
         }
     }
 
-    public void delete(long id) {
+    public void delete(long companyId, long id) {
         Connection conn = pool.borrow();
-        try (PreparedStatement ps = conn.prepareStatement("DELETE FROM events WHERE id = ?")) {
+        try (PreparedStatement ps = conn.prepareStatement("DELETE FROM events WHERE id = ? AND company_id = ?")) {
             ps.setLong(1, id);
+            ps.setLong(2, companyId);
             ps.executeUpdate();
         } catch (SQLException e) {
             throw new RuntimeException("Failed to delete event", e);
@@ -201,10 +213,12 @@ public final class EventRepository {
         ps.setBoolean(10, event.active());
     }
 
-    public Optional<Event> findById(long id) {
+    /** Empty for another company's event, same as for a missing one. */
+    public Optional<Event> findById(long companyId, long id) {
         Connection conn = pool.borrow();
-        try (PreparedStatement ps = conn.prepareStatement("SELECT * FROM events WHERE id = ?")) {
+        try (PreparedStatement ps = conn.prepareStatement("SELECT * FROM events WHERE id = ? AND company_id = ?")) {
             ps.setLong(1, id);
+            ps.setLong(2, companyId);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next() ? Optional.of(mapRow(rs)) : Optional.empty();
             }

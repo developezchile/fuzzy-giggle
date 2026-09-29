@@ -31,7 +31,7 @@ public final class EventAdminController {
 
     private Response list(RequestContext ctx) {
         Map<String, Object> body = Json.obj();
-        body.put("events", eventService.findAll().stream().map(listing -> {
+        body.put("events", eventService.findAll(ctx.caller().companyId()).stream().map(listing -> {
             Map<String, Object> event = adminEvent(listing.event());
             event.put("bookingCount", listing.bookingCount());
             event.put("confirmedPassengers", listing.confirmedPassengers());
@@ -41,20 +41,20 @@ public final class EventAdminController {
     }
 
     private Response get(RequestContext ctx) {
-        return Response.ok(adminEvent(eventService.findById(ctx.pathParamLong("id"))));
+        return Response.ok(adminEvent(eventService.findById(ctx.caller().companyId(), ctx.pathParamLong("id"))));
     }
 
     private Response create(RequestContext ctx) {
-        return Response.created(adminEvent(eventService.create(EventRequest.fromJson(ctx.jsonBody()))));
+        return Response.created(adminEvent(eventService.create(ctx.caller().companyId(), EventRequest.fromJson(ctx.jsonBody()))));
     }
 
     private Response update(RequestContext ctx) {
         long id = ctx.pathParamLong("id");
-        return Response.ok(adminEvent(eventService.update(id, EventRequest.fromJson(ctx.jsonBody()))));
+        return Response.ok(adminEvent(eventService.update(ctx.caller().companyId(), id, EventRequest.fromJson(ctx.jsonBody()))));
     }
 
     private Response delete(RequestContext ctx) {
-        eventService.delete(ctx.pathParamLong("id"));
+        eventService.delete(ctx.caller().companyId(), ctx.pathParamLong("id"));
         return Response.noContent();
     }
 

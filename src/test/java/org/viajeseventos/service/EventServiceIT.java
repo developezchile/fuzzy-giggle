@@ -13,6 +13,7 @@ import org.viajeseventos.repository.BookingRepository;
 import org.viajeseventos.repository.EventRepository;
 import org.viajeseventos.repository.ProfileRepository;
 import org.viajeseventos.repository.UserRepository;
+import org.viajeseventos.security.Caller;
 import org.viajeseventos.testsupport.TestDb;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -36,6 +37,7 @@ class EventServiceIT {
     private static BookingService bookingService;
     private static UserRepository userRepository;
     private static long clientProfileId;
+    private static long companyId;
 
     @BeforeAll
     static void setUp() {
@@ -46,6 +48,7 @@ class EventServiceIT {
                 Clock.fixed(Instant.parse("2026-10-01T12:00:00Z"), ZoneId.of("America/Santiago")));
         userRepository = new UserRepository(pool);
         clientProfileId = new ProfileRepository(pool).findByCode(Profile.CLIENT).orElseThrow().getId();
+        companyId = TestDb.seededCompanyId(pool);
     }
 
     @AfterAll
@@ -56,8 +59,8 @@ class EventServiceIT {
     @Test
     void createGeneratesAUniqueSlugFromTheName() {
         String name = "Ñandú & Café Tour " + System.nanoTime();
-        Event first = eventService.create(request(name, "2026-12-01", null));
-        Event second = eventService.create(request(name, "2026-12-02", null));
+        Event first = eventService.create(companyId, request(name, "2026-12-01", null));
+        Event second = eventService.create(companyId, request(name, "2026-12-02", null));
 
         assertTrue(first.slug().startsWith("nandu-cafe-tour-"), first.slug());
         assertEquals(first.slug() + "-2", second.slug());
@@ -65,11 +68,11 @@ class EventServiceIT {
 
     @Test
     void updateChangesEverythingButTheSlug() {
-        Event created = eventService.create(request("Original " + System.nanoTime(), "2026-12-01", null));
+        Event created = eventService.create(companyId, request("Original " + System.nanoTime(), "2026-12-01", null));
 
         Map<String, Object> body = body("Renombrado", "2026-12-05", "2026-12-06");
         body.put("active", false);
-        Event updated = eventService.update(created.id(), EventRequest.fromJson(body));
+        Event updated = eventService.update(companyId, created.id(), EventRequest.fromJson(body));
 
         assertEquals(created.slug(), updated.slug());
         assertEquals("Renombrado", updated.name());
@@ -79,30 +82,58 @@ class EventServiceIT {
 
     @Test
     void deactivatedEventsAreHiddenFromClientsAndNotBookable() {
-        Event event = eventService.create(request("Inactivo " + System.nanoTime(), "2026-12-01", null));
-        long userId = newUser();
-        assertTrue(listedFor(userId, event.id()));
+        Event event = eventService.create(companyId, request("Inactivo " + System.nanoTime(), "2026-12-01", null));
+        Caller user = newUser();
+        assertTrue(listedFor(user, event.id()));
 
         Map<String, Object> body = body(event.name(), "2026-12-01", null);
         body.put("active", false);
-        eventService.update(event.id(), EventRequest.fromJson(body));
+        eventService.update(companyId, event.id(), EventRequest.fromJson(body));
 
-        assertFalse(listedFor(userId, event.id()));
-        assertThrows(ResourceNotFoundException.class, () -> bookingService.create(userId, event.id(), booking()));
+        assertFalse(listedFor(user, event.id()));
+        assertThrows(ResourceNotFoundException.class, () -> bookingService.create(user, event.id(), booking()));
     }
 
     @Test
     void onlyEventsWithoutBookingsCanBeDeleted() {
-        Event unused = eventService.create(request("Sin reservas " + System.nanoTime(), "2026-12-01", null));
-        eventService.delete(unused.id());
-        assertThrows(ResourceNotFoundException.class, () -> eventService.findById(unused.id()));
+        Event unused = eventService.create(companyId, request("Sin reservas " + System.nanoTime(), "2026-12-01", null));
+        eventService.delete(companyId, unused.id());
+        assertThrows(ResourceNotFoundException.class, () -> eventService.findById(companyId, unused.id()));
 
-        Event booked = eventService.create(request("Con reservas " + System.nanoTime(), "2026-12-01", null));
-        long userId = newUser();
-        var b = bookingService.create(userId, booked.id(), booking());
-        bookingService.cancel(userId, b.id());
+        Event booked = eventService.create(companyId, request("Con reservas " + System.nanoTime(), "2026-12-01", null));
+        Caller user = newUser();
+        var b = bookingService.create(user, booked.id(), booking());
+        bookingService.cancel(user.userId(), b.id());
         // Even a cancelled booking is history worth keeping.
-        assertThrows(BusinessRuleException.class, () -> eventService.delete(booked.id()));
+        assertThrows(BusinessRuleException.class, () -> eventService.delete(companyId, booked.id()));
+    }
+
+    @Test
+    void anotherCompanysEventsAreInvisibleToItsAdminsAndClients() {
+        Event mine = eventService.create(companyId, request("Solo mío " + System.nanoTime(), "2026-12-01", null));
+        Caller myClient = newUser();
+        bookingService.create(myClient, mine.id(), booking());
+
+        long other = TestDb.newCompanyId(pool);
+        Caller otherClient = new Caller(myClient.userId(), other);
+        assertThrows(ResourceNotFoundException.class, () -> eventService.findById(other, mine.id()));
+        assertThrows(ResourceNotFoundException.class, () -> eventService.update(other, mine.id(),
+                request("Hackeado", "2026-12-01", null)));
+        assertThrows(ResourceNotFoundException.class, () -> eventService.delete(other, mine.id()));
+        assertTrue(eventService.findAll(other).isEmpty());
+        assertFalse(listedFor(otherClient, mine.id()));
+        assertThrows(ResourceNotFoundException.class, () -> bookingService.create(otherClient, mine.id(), booking()));
+        assertTrue(bookingService.allBookings(other, null).isEmpty());
+        assertTrue(bookingService.allBookings(other, mine.id()).isEmpty());
+        assertTrue(bookingService.allEvents(other).isEmpty());
+    }
+
+    @Test
+    void slugsOnlyNeedToBeUniqueWithinACompany() {
+        String name = "Compartido " + System.nanoTime();
+        Event mine = eventService.create(companyId, request(name, "2026-12-01", null));
+        Event theirs = eventService.create(TestDb.newCompanyId(pool), request(name, "2026-12-01", null));
+        assertEquals(mine.slug(), theirs.slug());
     }
 
     @Test
@@ -133,20 +164,21 @@ class EventServiceIT {
         return EventRequest.fromJson(body(name, start, end));
     }
 
-    private static boolean listedFor(long userId, long eventId) {
-        return bookingService.upcomingEvents(userId).stream().anyMatch(l -> l.event().id() == eventId);
+    private static boolean listedFor(Caller user, long eventId) {
+        return bookingService.upcomingEvents(user).stream().anyMatch(l -> l.event().id() == eventId);
     }
 
-    private static long newUser() {
+    private static Caller newUser() {
         String unique = String.valueOf(System.nanoTime());
         User user = new User();
         user.setUsername("ev" + unique);
         user.setEmail("ev_" + unique + "@test.com");
         user.setPassword("x");
         user.setProfileId(clientProfileId);
+        user.setCompanyId(companyId);
         user.setEnabled(true);
         user.setEmailVerified(true);
-        return userRepository.insert(user).getId();
+        return new Caller(userRepository.insert(user).getId(), companyId);
     }
 
     private static CreateBookingRequest booking() {

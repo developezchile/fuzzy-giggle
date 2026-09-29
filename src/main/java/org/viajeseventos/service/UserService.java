@@ -9,12 +9,16 @@ import org.viajeseventos.model.Profile;
 import org.viajeseventos.model.User;
 import org.viajeseventos.repository.ProfileRepository;
 import org.viajeseventos.repository.UserRepository;
+import org.viajeseventos.security.Caller;
 import org.viajeseventos.security.PasswordEncoder;
 
 import java.util.List;
 import java.util.Objects;
 
-/** Account administration (USERS module): list, create with a profile, reassign profile, enable/disable. */
+/**
+ * Account administration (USERS module): list, create with a profile, reassign profile, enable/disable
+ * — always within the caller's own company.
+ */
 public final class UserService {
 
     private final UserRepository userRepository;
@@ -28,12 +32,14 @@ public final class UserService {
         this.passwordEncoder = passwordEncoder;
     }
 
-    public List<User> findAll() {
-        return userRepository.findAll();
+    public List<User> findAll(long companyId) {
+        return userRepository.findAllByCompanyId(companyId);
     }
 
-    public User findById(long id) {
+    /** Another company's account is "not found", never "forbidden" — its existence isn't revealed. */
+    public User findById(long companyId, long id) {
         return userRepository.findById(id)
+                .filter(user -> user.getCompanyId() == companyId)
                 .orElseThrow(() -> new ResourceNotFoundException("Usuario no encontrado"));
     }
 
@@ -42,7 +48,7 @@ public final class UserService {
         return profileRepository.findAll();
     }
 
-    public User create(CreateUserRequest request) {
+    public User create(long companyId, CreateUserRequest request) {
         if (userRepository.existsByUsername(request.username)) {
             throw new DuplicateResourceException("El nombre de usuario '" + request.username + "' ya está en uso");
         }
@@ -59,13 +65,15 @@ public final class UserService {
         user.setLastName(request.lastName);
         user.setPhone(request.phone);
         user.setProfileId(request.profileId);
+        user.setCompanyId(companyId);
         user.setEnabled(true);
         user.setEmailVerified(true);
-        return findById(userRepository.insert(user).getId());
+        return findById(companyId, userRepository.insert(user).getId());
     }
 
-    public User update(long callerId, long id, UpdateUserRequest request) {
-        User user = findById(id);
+    public User update(Caller caller, long id, UpdateUserRequest request) {
+        long callerId = caller.userId();
+        User user = findById(caller.companyId(), id);
         Profile target = requireProfile(request.profileId);
         boolean profileChanges = !Objects.equals(user.getProfileId(), request.profileId);
 
@@ -81,8 +89,8 @@ public final class UserService {
         boolean wasActiveAdmin = Profile.ADMIN.equals(user.getProfileCode()) && user.isEnabled();
         boolean staysActiveAdmin = target.isAdmin() && request.enabled;
         if (wasActiveAdmin && !staysActiveAdmin
-                && userRepository.countEnabledByProfileId(user.getProfileId()) <= 1) {
-            throw new BusinessRuleException("Debe quedar al menos un administrador habilitado");
+                && userRepository.countEnabledByCompanyAndProfile(caller.companyId(), user.getProfileId()) <= 1) {
+            throw new BusinessRuleException("La empresa debe tener al menos un administrador habilitado");
         }
 
         user.setFirstName(request.firstName);
@@ -91,7 +99,7 @@ public final class UserService {
         user.setProfileId(request.profileId);
         user.setEnabled(request.enabled);
         userRepository.update(user);
-        return findById(id);
+        return findById(caller.companyId(), id);
     }
 
     private Profile requireProfile(long profileId) {

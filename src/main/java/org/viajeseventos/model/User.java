@@ -13,6 +13,13 @@ public final class User {
     private String lastName;
     private String phone;
     private Long profileId;
+    private Long companyId;
+    /** Read-only, joined from {@code companies} when loaded — never written back. */
+    private String companyName;
+    private String companySlug;
+    private boolean companyActive = true;
+    /** Platform owner: gets the platform modules on top of the profile's. Set at creation only. */
+    private boolean platformAdmin;
     /** Read-only, joined from {@code profiles} when loaded — never written back. */
     private String profileCode;
     private String profileName;
@@ -83,6 +90,46 @@ public final class User {
 
     public void setProfileId(Long profileId) {
         this.profileId = profileId;
+    }
+
+    public Long getCompanyId() {
+        return companyId;
+    }
+
+    public void setCompanyId(Long companyId) {
+        this.companyId = companyId;
+    }
+
+    public String getCompanyName() {
+        return companyName;
+    }
+
+    public void setCompanyName(String companyName) {
+        this.companyName = companyName;
+    }
+
+    public String getCompanySlug() {
+        return companySlug;
+    }
+
+    public void setCompanySlug(String companySlug) {
+        this.companySlug = companySlug;
+    }
+
+    public boolean isCompanyActive() {
+        return companyActive;
+    }
+
+    public void setCompanyActive(boolean companyActive) {
+        this.companyActive = companyActive;
+    }
+
+    public boolean isPlatformAdmin() {
+        return platformAdmin;
+    }
+
+    public void setPlatformAdmin(boolean platformAdmin) {
+        this.platformAdmin = platformAdmin;
     }
 
     public String getProfileCode() {

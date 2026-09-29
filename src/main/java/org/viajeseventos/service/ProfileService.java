@@ -10,6 +10,7 @@ import org.viajeseventos.repository.ProfileRepository;
 
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * The profile maintainer (PROFILES module): which modules each profile grants. Rules, as in
@@ -17,8 +18,10 @@ import java.util.List;
  * <ul>
  *   <li>names are unique, case-insensitively;</li>
  *   <li>system profiles (ADMIN, CLIENT) can be renamed but never deleted;</li>
- *   <li>ADMIN always grants every module — otherwise removing PROFILES from it would leave no one
- *       able to undo that;</li>
+ *   <li>ADMIN always grants exactly {@link AppModule#adminModules()} — otherwise a company could be
+ *       left with no one able to manage its users;</li>
+ *   <li>platform modules are never granted through a profile (see {@link AppModule#platform()}) —
+ *       any in the request are dropped;</li>
  *   <li>a profile still assigned to users can't be deleted.</li>
  * </ul>
  */
@@ -44,19 +47,23 @@ public final class ProfileService {
         Profile profile = new Profile();
         profile.setName(request.name);
         profile.setDescription(request.description);
-        profile.setModules(request.modules);
+        profile.setModules(grantable(request.modules));
         return profileRepository.insert(profile);
     }
 
     public Profile update(long id, ProfileRequest request) {
         Profile profile = findById(id);
         requireUniqueName(request.name, id);
-        if (profile.isAdmin() && !request.modules.containsAll(EnumSet.allOf(AppModule.class))) {
-            throw new BusinessRuleException("El perfil Administrador siempre tiene todos los módulos habilitados");
+        Set<AppModule> modules = grantable(request.modules);
+        if (profile.isAdmin()) {
+            if (!modules.containsAll(AppModule.adminModules())) {
+                throw new BusinessRuleException("El perfil Administrador siempre tiene todos los módulos de administración habilitados");
+            }
+            modules = AppModule.adminModules();
         }
         profile.setName(request.name);
         profile.setDescription(request.description);
-        profile.setModules(request.modules);
+        profile.setModules(modules);
         return profileRepository.update(profile);
     }
 
@@ -70,6 +77,13 @@ public final class ProfileService {
                     + " usuario(s) asignado(s). Asígnales otro perfil antes de eliminarlo.");
         }
         profileRepository.delete(id);
+    }
+
+    private static Set<AppModule> grantable(Set<AppModule> requested) {
+        Set<AppModule> modules = EnumSet.noneOf(AppModule.class);
+        modules.addAll(requested);
+        modules.retainAll(AppModule.profileModules());
+        return modules;
     }
 
     private void requireUniqueName(String name, Long excludeId) {

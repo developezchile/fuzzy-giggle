@@ -5,10 +5,9 @@ import org.viajeseventos.exception.BusinessRuleException;
 import org.viajeseventos.exception.ResourceNotFoundException;
 import org.viajeseventos.model.Event;
 import org.viajeseventos.repository.EventRepository;
+import org.viajeseventos.validation.Slugs;
 
-import java.text.Normalizer;
 import java.util.List;
-import java.util.Locale;
 
 /**
  * Event administration (EVENT_ADMIN module). Deactivating hides an event from clients and stops
@@ -23,49 +22,39 @@ public final class EventService {
         this.eventRepository = eventRepository;
     }
 
-    public List<EventRepository.AdminListing> findAll() {
-        return eventRepository.findAllForAdmin();
+    public List<EventRepository.AdminListing> findAll(long companyId) {
+        return eventRepository.findAllForAdmin(companyId);
     }
 
-    public Event findById(long id) {
-        return eventRepository.findById(id).orElseThrow(() -> new ResourceNotFoundException("Evento no encontrado"));
+    /** Another company's event is "not found", never "forbidden" — its existence isn't revealed. */
+    public Event findById(long companyId, long id) {
+        return eventRepository.findById(companyId, id).orElseThrow(() -> new ResourceNotFoundException("Evento no encontrado"));
     }
 
-    public Event create(EventRequest req) {
-        String slug = uniqueSlug(req.name);
-        long id = eventRepository.insert(new Event(0, slug, req.name, req.venue, req.commune, req.category,
+    public Event create(long companyId, EventRequest req) {
+        String slug = uniqueSlug(companyId, req.name);
+        long id = eventRepository.insert(companyId, new Event(0, slug, req.name, req.venue, req.commune, req.category,
                 req.imageUrl, req.startDate, req.endDate, req.sourceUrl, req.active));
-        return findById(id);
+        return findById(companyId, id);
     }
 
-    public Event update(long id, EventRequest req) {
-        Event existing = findById(id);
-        eventRepository.update(new Event(id, existing.slug(), req.name, req.venue, req.commune, req.category,
+    public Event update(long companyId, long id, EventRequest req) {
+        Event existing = findById(companyId, id);
+        eventRepository.update(companyId, new Event(id, existing.slug(), req.name, req.venue, req.commune, req.category,
                 req.imageUrl, req.startDate, req.endDate, req.sourceUrl, req.active));
-        return findById(id);
+        return findById(companyId, id);
     }
 
-    public void delete(long id) {
-        findById(id);
+    public void delete(long companyId, long id) {
+        findById(companyId, id);
         if (eventRepository.hasBookings(id)) {
             throw new BusinessRuleException("El evento tiene reservas. Desactívalo en lugar de eliminarlo para conservarlas.");
         }
-        eventRepository.delete(id);
+        eventRepository.delete(companyId, id);
     }
 
-    /** "Maná - Vivir sin aire Tour" → "mana-vivir-sin-aire-tour", suffixed -2, -3… if taken. */
-    private String uniqueSlug(String name) {
-        String base = Normalizer.normalize(name, Normalizer.Form.NFD)
-                .replaceAll("\\p{M}", "")
-                .toLowerCase(Locale.ROOT)
-                .replaceAll("[^a-z0-9]+", "-")
-                .replaceAll("(^-+|-+$)", "");
-        if (base.isEmpty()) base = "evento";
-        if (base.length() > 100) base = base.substring(0, 100).replaceAll("-+$", "");
-        String slug = base;
-        for (int n = 2; eventRepository.existsBySlug(slug); n++) {
-            slug = base + "-" + n;
-        }
-        return slug;
+    /** "Maná - Vivir sin aire Tour" → "mana-vivir-sin-aire-tour", suffixed -2, -3… if the company already has it. */
+    private String uniqueSlug(long companyId, String name) {
+        return Slugs.unique(Slugs.from(name, 100, "evento"), slug -> eventRepository.existsBySlug(companyId, slug));
     }
 }

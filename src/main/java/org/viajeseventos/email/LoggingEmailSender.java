@@ -10,8 +10,9 @@ public final class LoggingEmailSender implements EmailSender {
     private static final Logger log = LogManager.getLogger(LoggingEmailSender.class);
 
     @Override
-    public void send(String to, String subject, String htmlBody) {
-        log.warn("SMTP_HOST not configured — logging email instead of sending. to={} subject={}", to, subject);
+    public void send(String to, String subject, String htmlBody, OnBehalfOf onBehalfOf) {
+        log.warn("SMTP_HOST not configured — logging email instead of sending. to={} subject={} onBehalfOf={}",
+                to, subject, onBehalfOf);
         log.info("Email body for {}:\n{}", to, htmlBody);
     }
 }

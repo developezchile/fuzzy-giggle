@@ -26,18 +26,17 @@ public final class BookingController {
 
     public void register(Router router) {
         router.get("/events", AppModule.EVENTS, this::upcomingEvents);
-        router.post("/events/{id}/bookings", AppModule.EVENTS, this::create);
-        router.get("/bookings/me", AppModule.EVENTS, this::mine);
-        router.post("/bookings/{id}/cancel", AppModule.EVENTS, this::cancel);
+        router.post("/events/{id}/bookings", AppModule.MY_BOOKINGS, this::create);
+        router.get("/bookings/me", AppModule.MY_BOOKINGS, this::mine);
+        router.post("/bookings/{id}/cancel", AppModule.MY_BOOKINGS, this::cancel);
 
         router.get("/admin/bookings/events", AppModule.BOOKINGS, this::allEvents);
         router.get("/admin/bookings", AppModule.BOOKINGS, this::allBookings);
     }
 
     private Response upcomingEvents(RequestContext ctx) {
-        long userId = ctx.requireUserId();
         Map<String, Object> body = Json.obj();
-        body.put("events", bookingService.upcomingEvents(userId).stream().map(listing -> {
+        body.put("events", bookingService.upcomingEvents(ctx.caller()).stream().map(listing -> {
             Map<String, Object> event = BookingResponse.event(listing.event());
             event.put("myPassengerCount", listing.myPassengerCount());
             return event;
@@ -46,26 +45,24 @@ public final class BookingController {
     }
 
     private Response create(RequestContext ctx) {
-        long userId = ctx.requireUserId();
         long eventId = ctx.pathParamLong("id");
-        var booking = bookingService.create(userId, eventId, CreateBookingRequest.fromJson(ctx.jsonBody()));
+        var booking = bookingService.create(ctx.caller(), eventId, CreateBookingRequest.fromJson(ctx.jsonBody()));
         return Response.created(BookingResponse.from(booking));
     }
 
     private Response mine(RequestContext ctx) {
         Map<String, Object> body = Json.obj();
-        body.put("bookings", bookingService.myBookings(ctx.requireUserId()).stream().map(BookingResponse::from).toList());
+        body.put("bookings", bookingService.myBookings(ctx.caller().userId()).stream().map(BookingResponse::from).toList());
         return Response.ok(body);
     }
 
     private Response cancel(RequestContext ctx) {
-        long userId = ctx.requireUserId();
-        return Response.ok(BookingResponse.from(bookingService.cancel(userId, ctx.pathParamLong("id"))));
+        return Response.ok(BookingResponse.from(bookingService.cancel(ctx.caller().userId(), ctx.pathParamLong("id"))));
     }
 
     private Response allEvents(RequestContext ctx) {
         Map<String, Object> body = Json.obj();
-        body.put("events", bookingService.allEvents().stream().map(BookingResponse::event).toList());
+        body.put("events", bookingService.allEvents(ctx.caller().companyId()).stream().map(BookingResponse::event).toList());
         return Response.ok(body);
     }
 
@@ -80,7 +77,7 @@ public final class BookingController {
             }
         }
         Map<String, Object> body = Json.obj();
-        body.put("bookings", bookingService.allBookings(eventId).stream().map(BookingResponse::from).toList());
+        body.put("bookings", bookingService.allBookings(ctx.caller().companyId(), eventId).stream().map(BookingResponse::from).toList());
         return Response.ok(body);
     }
 }

@@ -3,6 +3,7 @@ package org.viajeseventos.http;
 import org.viajeseventos.exception.BusinessRuleException;
 import org.viajeseventos.exception.UnauthorizedException;
 import org.viajeseventos.json.Json;
+import org.viajeseventos.security.Caller;
 import org.viajeseventos.security.JwtService;
 import com.sun.net.httpserver.HttpExchange;
 
@@ -20,6 +21,7 @@ public final class RequestContext {
     private final Map<String, String> pathParams;
     private final JwtService jwtService;
     private String cachedBody;
+    private Caller caller;
 
     RequestContext(HttpExchange exchange, Map<String, String> pathParams, JwtService jwtService) {
         this.exchange = exchange;
@@ -92,6 +94,18 @@ public final class RequestContext {
      */
     public long requireUserId() {
         return jwtService.userIdFromToken(bearerToken());
+    }
+
+    void setCaller(Caller caller) {
+        this.caller = caller;
+    }
+
+    /** The caller of a route registered with a module — set by the {@link Router} once access is granted. */
+    public Caller caller() {
+        if (caller == null) {
+            throw new IllegalStateException("caller() is only available on routes registered with a module");
+        }
+        return caller;
     }
 
     private String bearerToken() {

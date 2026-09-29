@@ -2,6 +2,7 @@ package org.viajeseventos.service;
 
 import org.viajeseventos.dto.request.AuthRequest;
 import org.viajeseventos.dto.request.ChangePasswordRequest;
+import org.viajeseventos.dto.request.RegisterCompanyRequest;
 import org.viajeseventos.dto.request.RegisterRequest;
 import org.viajeseventos.dto.request.UpdateMeRequest;
 import org.viajeseventos.dto.response.AuthResponse;
@@ -14,10 +15,12 @@ import org.viajeseventos.exception.ResourceNotFoundException;
 import org.viajeseventos.exception.UnauthorizedException;
 import org.viajeseventos.log.LogManager;
 import org.viajeseventos.log.Logger;
+import org.viajeseventos.model.Company;
 import org.viajeseventos.model.EmailVerificationToken;
 import org.viajeseventos.model.PasswordResetToken;
 import org.viajeseventos.model.Profile;
 import org.viajeseventos.model.User;
+import org.viajeseventos.repository.CompanyRepository;
 import org.viajeseventos.repository.EmailVerificationTokenRepository;
 import org.viajeseventos.repository.PasswordResetTokenRepository;
 import org.viajeseventos.repository.ProfileRepository;
@@ -25,11 +28,16 @@ import org.viajeseventos.repository.UserRepository;
 import org.viajeseventos.security.JwtService;
 import org.viajeseventos.security.PasswordEncoder;
 import org.viajeseventos.security.TokenGenerator;
+import org.viajeseventos.validation.Slugs;
 
 import java.time.LocalDateTime;
 import java.util.Map;
 
-/** Registration + login. No {@code AuthenticationManager} — password check happens right here via {@link PasswordEncoder}. */
+/**
+ * Registration (companies and their clients) + login. No {@code AuthenticationManager} — password
+ * check happens right here via {@link PasswordEncoder}. Emails go out in the name of the account's
+ * company.
+ */
 public final class AuthService {
 
     private static final Logger log = LogManager.getLogger(AuthService.class);
@@ -39,6 +47,7 @@ public final class AuthService {
 
     private final UserRepository userRepository;
     private final ProfileRepository profileRepository;
+    private final CompanyRepository companyRepository;
     private final EmailVerificationTokenRepository emailVerificationTokenRepository;
     private final PasswordResetTokenRepository passwordResetTokenRepository;
     private final PasswordEncoder passwordEncoder;
@@ -47,11 +56,12 @@ public final class AuthService {
     private final String frontendUrl;
 
     public AuthService(UserRepository userRepository, ProfileRepository profileRepository,
-                        EmailVerificationTokenRepository emailVerificationTokenRepository,
+                        CompanyRepository companyRepository, EmailVerificationTokenRepository emailVerificationTokenRepository,
                         PasswordResetTokenRepository passwordResetTokenRepository, PasswordEncoder passwordEncoder,
                         JwtService jwtService, EmailSender emailSender, String frontendUrl) {
         this.userRepository = userRepository;
         this.profileRepository = profileRepository;
+        this.companyRepository = companyRepository;
         this.emailVerificationTokenRepository = emailVerificationTokenRepository;
         this.passwordResetTokenRepository = passwordResetTokenRepository;
         this.passwordEncoder = passwordEncoder;
@@ -60,16 +70,47 @@ public final class AuthService {
         this.frontendUrl = frontendUrl;
     }
 
+    /** A client signing up through their company's link. */
     public void register(RegisterRequest req) {
+        Company company = companyRepository.findBySlug(req.company)
+                .filter(Company::active)
+                .orElseThrow(() -> new ResourceNotFoundException("La empresa del enlace no existe o está deshabilitada"));
+        requireNewAccount(req);
+        createAccount(req, company.id(), Profile.CLIENT);
+
+        // No session is issued here — the account isn't verified yet, so the user must go
+        // through login (and thus authenticate()'s verification check) once they confirm the email.
+    }
+
+    /**
+     * A transport company signing itself up, with its first administrator. The slug (its clients'
+     * registration link) is the one asked for, or derived from the name — suffixed -2, -3… if taken.
+     */
+    public Company registerCompany(RegisterCompanyRequest req) {
+        if (req.companySlug != null && companyRepository.existsBySlug(req.companySlug)) {
+            throw new DuplicateResourceException("El link '" + req.companySlug + "' ya está en uso. Elige otro.");
+        }
+        requireNewAccount(req.account);
+        String slug = req.companySlug != null ? req.companySlug
+                : Slugs.unique(Slugs.from(req.companyName, 60, "empresa"), companyRepository::existsBySlug);
+        long companyId = companyRepository.insert(req.companyName, slug, req.account.email);
+        createAccount(req.account, companyId, Profile.ADMIN);
+        return companyRepository.findById(companyId).orElseThrow();
+    }
+
+    private void requireNewAccount(RegisterRequest req) {
         if (userRepository.existsByUsername(req.username)) {
             throw new DuplicateResourceException("El nombre de usuario '" + req.username + "' ya está en uso");
         }
         if (userRepository.existsByEmail(req.email)) {
             throw new DuplicateResourceException("El correo '" + req.email + "' ya está registrado");
         }
+    }
 
-        Profile client = profileRepository.findByCode(Profile.CLIENT)
-                .orElseThrow(() -> new IllegalStateException("CLIENT profile missing — V1__init.sql seeds it"));
+    /** Unverified account in {@code companyId} with the given system profile; sends the verification email. */
+    private void createAccount(RegisterRequest req, long companyId, String profileCode) {
+        Profile profile = profileRepository.findByCode(profileCode)
+                .orElseThrow(() -> new IllegalStateException(profileCode + " profile missing — V1__init.sql seeds it"));
 
         User user = new User();
         user.setUsername(req.username);
@@ -78,15 +119,13 @@ public final class AuthService {
         user.setFirstName(req.firstName);
         user.setLastName(req.lastName);
         user.setPhone(req.phone);
-        user.setProfileId(client.getId());
+        user.setProfileId(profile.getId());
+        user.setCompanyId(companyId);
         user.setEnabled(true);
         user.setEmailVerified(false);
 
         User saved = userRepository.insert(user);
-        issueVerificationEmail(saved);
-
-        // No session is issued here — the account isn't verified yet, so the user must go
-        // through login (and thus authenticate()'s verification check) once they confirm the email.
+        issueVerificationEmail(userRepository.findById(saved.getId()).orElseThrow());
     }
 
     public AuthResponse authenticate(AuthRequest req) {
@@ -97,6 +136,9 @@ public final class AuthService {
         }
         if (!user.isEnabled()) {
             throw new BusinessRuleException("La cuenta está deshabilitada");
+        }
+        if (!companyUsable(user)) {
+            throw new BusinessRuleException("La empresa está deshabilitada. Contacta al administrador de la plataforma.");
         }
         if (!user.isEmailVerified()) {
             throw new BusinessRuleException("Debes verificar tu correo electrónico antes de iniciar sesión. Revisa tu bandeja de entrada.");
@@ -114,7 +156,15 @@ public final class AuthService {
         if (!user.isEnabled()) {
             throw new UnauthorizedException("La cuenta está deshabilitada");
         }
+        if (!companyUsable(user)) {
+            throw new UnauthorizedException("La empresa está deshabilitada");
+        }
         return sessionUser(user);
+    }
+
+    /** A disabled company locks its accounts out — except the platform admin, who must be able to re-enable it. */
+    private static boolean companyUsable(User user) {
+        return user.isCompanyActive() || user.isPlatformAdmin();
     }
 
     public Map<String, Object> updateMe(long userId, UpdateMeRequest req) {
@@ -224,8 +274,8 @@ public final class AuthService {
         emailVerificationTokenRepository.insert(evt);
 
         String url = frontendUrl + "/verify-email?token=" + evt.getToken();
-        sendEmailSafely(user.getEmail(), "Verifica tu correo — Viajes a Eventos",
-                EmailTemplates.verifyEmail(user.getUsername(), url));
+        sendEmailSafely(user, "Verifica tu correo — " + user.getCompanyName(),
+                EmailTemplates.verifyEmail(user.getCompanyName(), user.getUsername(), url));
     }
 
     private void issueResetEmail(User user) {
@@ -238,16 +288,17 @@ public final class AuthService {
         passwordResetTokenRepository.insert(prt);
 
         String url = frontendUrl + "/reset-password?token=" + prt.getToken();
-        sendEmailSafely(user.getEmail(), "Restablece tu contraseña — Viajes a Eventos",
-                EmailTemplates.resetPassword(user.getUsername(), url));
+        sendEmailSafely(user, "Restablece tu contraseña — " + user.getCompanyName(),
+                EmailTemplates.resetPassword(user.getCompanyName(), user.getUsername(), url));
     }
 
     /** A flaky SMTP provider must not turn "register" or "forgot password" into a 500 — log and move on. */
-    private void sendEmailSafely(String to, String subject, String htmlBody) {
+    private void sendEmailSafely(User to, String subject, String htmlBody) {
         try {
-            emailSender.send(to, subject, htmlBody);
+            String replyTo = companyRepository.findById(to.getCompanyId()).map(Company::contactEmail).orElse(null);
+            emailSender.send(to.getEmail(), subject, htmlBody, new EmailSender.OnBehalfOf(to.getCompanyName(), replyTo));
         } catch (Exception e) {
-            log.error("Failed to send email to {}: {}", e, to, e.getMessage());
+            log.error("Failed to send email to {}: {}", e, to.getEmail(), e.getMessage());
         }
     }
 }

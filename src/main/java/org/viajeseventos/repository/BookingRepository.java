@@ -104,11 +104,12 @@ public final class BookingRepository {
         return query(SELECT_BOOKINGS + " WHERE b.user_id = ? ORDER BY b.created_at DESC, b.id DESC", userId);
     }
 
-    /** Admin view: every booking, optionally for one event, ordered by event date then creation. */
-    public List<Booking> findAll(Long eventId) {
+    /** Admin view: every booking of the company's events, optionally for one event, ordered by event date then creation. */
+    public List<Booking> findAll(long companyId, Long eventId) {
         return eventId == null
-                ? query(SELECT_BOOKINGS + " ORDER BY e.start_date, e.name, b.created_at, b.id")
-                : query(SELECT_BOOKINGS + " WHERE b.event_id = ? ORDER BY b.created_at, b.id", eventId);
+                ? query(SELECT_BOOKINGS + " WHERE e.company_id = ? ORDER BY e.start_date, e.name, b.created_at, b.id", companyId)
+                : query(SELECT_BOOKINGS + " WHERE e.company_id = ? AND b.event_id = ? ORDER BY b.created_at, b.id",
+                        companyId, eventId);
     }
 
     public void cancel(long id) {
