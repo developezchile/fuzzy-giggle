@@ -12,3 +12,6 @@ dependency-reduced-pom.xml
 
 ### VS Code ###
 .vscode/
+
+# Environment files with real secrets (see .env.example)
+.env

@@ -96,6 +96,13 @@ Queda escuchando en `http://localhost:8080/api`. La configuración se resuelve i
 variable de entorno, luego `./config.yml` local (en `.gitignore`), luego `src/main/resources/config.yml`. Los secretos
 (`JWT_SECRET`, `DB_PASSWORD`, `ADMIN_BOOTSTRAP_PASSWORD`) van en el `config.yml` local, nunca en el que se sube al repo.
 
+**CORS:** se aceptan `FRONTEND_URL`, los `localhost` de desarrollo y lo que venga en `CORS_ORIGINS`, separado por
+comas, igual que en condominios. Los `/` finales se quitan solos.
+
+**Render:** [.env.example](.env.example) trae las variables listas para "Add from .env". Del lado del front,
+`NEXT_PUBLIC_API_URL` debe estar definida en Render: el build de producción falla si falta, o si en Render apunta a
+`localhost` (ver `ui/next.config.ts`).
+
 En el primer arranque `AdminBootstrap` crea `admin@viajeseventos.local`. Usa `ADMIN_BOOTSTRAP_PASSWORD` si está
 definida. Si no, genera una contraseña y la muestra una sola vez en el log.
 

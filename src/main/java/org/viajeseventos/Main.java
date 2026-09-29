@@ -103,8 +103,12 @@ public final class Main {
         UserController userController = new UserController(
                 new UserService(userRepository, profileRepository, passwordEncoder), authService);
 
-        List<String> allowedOrigins = List.of(config.frontendUrl,
-                "http://localhost:3000", "http://localhost:4200", "http://localhost:5173", "http://localhost:8080");
+        // FRONTEND_URL is always allowed; CORS_ORIGINS adds more (e.g. a custom domain next to the
+        // onrender.com one) without hardcoding them here.
+        List<String> allowedOrigins = new java.util.ArrayList<>(List.of(config.frontendUrl,
+                "http://localhost:3000", "http://localhost:4200", "http://localhost:5173", "http://localhost:8080"));
+        allowedOrigins.addAll(config.corsOrigins);
+        log.info("CORS allowed origins: {}", allowedOrigins);
         Router router = new Router(jwtService, new ModuleAccess(profileRepository), allowedOrigins, config.contextPath);
         healthController.register(router);
         authController.register(router);

@@ -20,6 +20,8 @@ public final class AppConfig {
     public final long jwtExpirationMs;
 
     public final String frontendUrl;
+    /** Extra browser origins allowed by CORS besides FRONTEND_URL (comma-separated CORS_ORIGINS, as in condominios). */
+    public final java.util.List<String> corsOrigins;
 
     public final String smtpHost;
     public final int smtpPort;
@@ -57,7 +59,9 @@ public final class AppConfig {
         }
         this.jwtExpirationMs = Env.getLong("JWT_EXPIRATION_MS", 86_400_000L);
 
-        this.frontendUrl = Env.get("FRONTEND_URL", "http://localhost:3000");
+        this.frontendUrl = stripTrailingSlash(Env.get("FRONTEND_URL", "http://localhost:3000"));
+        this.corsOrigins = java.util.Arrays.stream(Env.get("CORS_ORIGINS", "").split(","))
+                .map(String::trim).filter(o -> !o.isEmpty()).map(AppConfig::stripTrailingSlash).toList();
 
         // Blank SMTP_HOST (the default) makes Main wire up LoggingEmailSender instead of real SMTP.
         this.smtpHost = Env.get("SMTP_HOST", "");
@@ -76,6 +80,11 @@ public final class AppConfig {
      * Returns {@code [jdbcUrl, username, password]}; username/password are {@code null} when
      * {@code rawUrl} is already a JDBC URL (they come from DB_USERNAME/DB_PASSWORD instead).
      */
+    /** Browsers send Origin without a trailing slash, so "https://x.onrender.com/" would never match. */
+    private static String stripTrailingSlash(String url) {
+        return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
+    }
+
     private static String[] parseDbUrl(String rawUrl) {
         if (rawUrl.startsWith("jdbc:")) {
             return new String[] { rawUrl, null, null };
