@@ -1,0 +1,8 @@
+target/
+logs/
+.git/
+.idea/
+.vscode/
+*.md
+# Untracked local secrets override — never send this into the build context
+config.yml

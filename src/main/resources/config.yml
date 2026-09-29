@@ -1,0 +1,47 @@
+# Shipped defaults for every setting org.viajeseventos.config.AppConfig reads via Env.get*, loaded
+# once at startup by org.viajeseventos.config.ConfigFile (see that class's javadoc for the full
+# lookup order). A real environment variable with the same name (e.g. DB_URL) always wins over
+# whatever is here.
+#
+# To override without rebuilding the jar: drop your own config.yml next to it (in the working
+# directory) or point CONFIG_FILE at any path — same pattern as logging.yml/LOGGING_CONFIG_FILE.
+# Do that for anything secret (DB_PASSWORD, JWT_SECRET, SMTP_PASSWORD) rather than editing this
+# shipped copy, since it's checked into git.
+#
+# Grouping below (server:, database:, ...) is purely for readability - each leaf key is the env
+# var name it stands in for, and lookup ignores the nesting.
+
+server:
+  PORT: 8080
+  CONTEXT_PATH: /api
+
+database:
+  DB_URL: jdbc:postgresql://localhost:5432/viajes_eventos
+  DB_USERNAME: postgres
+  DB_PASSWORD: postgres
+  DB_POOL_SIZE: 10
+
+jwt:
+  # No default on purpose — AppConfig fails fast at startup if this is blank. Set a real secret
+  # via env var or your local (gitignored) config.yml override, never here.
+  JWT_SECRET: ""
+  JWT_EXPIRATION_MS: 86400000
+
+frontend:
+  FRONTEND_URL: http://localhost:3000
+
+logging:
+  LOG_LEVEL: INFO
+
+smtp:
+  SMTP_HOST: ""
+  SMTP_PORT: 587
+  SMTP_USERNAME: ""
+  SMTP_PASSWORD: ""
+  SMTP_STARTTLS: true
+  SMTP_FROM_ADDRESS: no-reply@viajeseventos.local
+  SMTP_FROM_NAME: Viajes a Eventos
+
+rateLimit:
+  RATE_LIMIT_MAX_REQUESTS: 10
+  RATE_LIMIT_WINDOW_MS: 60000

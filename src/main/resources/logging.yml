@@ -1,0 +1,21 @@
+# Default logging configuration for viajes-eventos-api, loaded once at startup by
+# org.viajeseventos.log.LoggingConfig (see that class's javadoc for the full lookup order).
+#
+# To override without rebuilding the jar: drop your own logging.yml next to it (in the working
+# directory) or point LOGGING_CONFIG_FILE at any path. The LOG_LEVEL env var, if set, always wins
+# over the "level" below.
+#
+# "loggers" keys are simple class names (e.g. "Router"), matching how LogManager.getLogger names
+# loggers in this module - not fully-qualified class names as in real Log4j2/Logback configs.
+logging:
+  level: INFO
+  loggers:
+    Router: INFO
+  console:
+    enabled: true
+  file:
+    enabled: true
+    path: logs/viajes-eventos-api.log
+    rolling:
+      maxFileSizeMb: 10
+      maxHistory: 7

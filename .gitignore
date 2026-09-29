@@ -1,0 +1,14 @@
+target/
+logs/
+.DS_Store
+dependency-reduced-pom.xml
+
+# Local config.yml override (CONFIG_FILE / ./config.yml) — for real secrets, never the shipped
+# src/main/resources/config.yml
+/config.yml
+
+### IntelliJ IDEA ###
+.idea/
+
+### VS Code ###
+.vscode/
