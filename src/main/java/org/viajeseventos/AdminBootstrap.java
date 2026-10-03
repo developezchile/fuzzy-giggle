@@ -33,8 +33,6 @@ public final class AdminBootstrap {
     private AdminBootstrap() {
     }
 
-    /** Slug of the company seeded by V5__companies.sql — home of the platform administrator. */
-    static final String PLATFORM_COMPANY_SLUG = "viajes-eventos";
 
     public static void run(ProfileRepository profileRepository, UserRepository userRepository,
                            CompanyRepository companyRepository, PasswordEncoder passwordEncoder) {
@@ -42,8 +40,11 @@ public final class AdminBootstrap {
                 .orElseThrow(() -> new IllegalStateException("ADMIN profile missing — V1__init.sql seeds it"));
         syncAdminModules(admin, profileRepository);
         if (!userRepository.existsPlatformAdmin()) {
-            long companyId = companyRepository.findBySlug(PLATFORM_COMPANY_SLUG)
-                    .orElseThrow(() -> new IllegalStateException("Company '" + PLATFORM_COMPANY_SLUG + "' missing — V5__companies.sql seeds it"))
+            // The company this deployment serves, resolved the way the rest of the app resolves it.
+            // It used to be looked up by the slug V5 seeded, which broke the first time the company
+            // was renamed — on a fresh install, where V11 renames it right after V5 creates it.
+            long companyId = companyRepository.findTheCompany()
+                    .orElseThrow(() -> new IllegalStateException("No hay empresa activa — V5__companies.sql la siembra"))
                     .id();
             createAdmin(admin, companyId, userRepository, passwordEncoder);
         }

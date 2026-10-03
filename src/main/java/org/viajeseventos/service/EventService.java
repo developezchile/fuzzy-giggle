@@ -10,9 +10,10 @@ import org.viajeseventos.validation.Slugs;
 import java.util.List;
 
 /**
- * Event administration (EVENT_ADMIN module). Deactivating hides an event from clients and stops
- * new bookings while keeping existing ones; deleting is only for events nobody ever booked, so a
- * booking's event is never lost.
+ * Event administration (EVENT_ADMIN module): the company's catalog of what's happening, which the
+ * operator then publishes departures over (TRIP_ADMIN). Deactivating hides an event from clients
+ * and stops new bookings on every trip to it while keeping the bookings already made; deleting is
+ * only for an event nothing was ever published over, so a booking's event is never lost.
  */
 public final class EventService {
 
@@ -33,22 +34,37 @@ public final class EventService {
 
     public Event create(long companyId, EventRequest req) {
         String slug = uniqueSlug(companyId, req.name);
+        // source = null: lo cargó una persona, no el importador.
         long id = eventRepository.insert(companyId, new Event(0, slug, req.name, req.venue, req.commune, req.category,
-                req.imageUrl, req.startDate, req.endDate, req.sourceUrl, req.active));
+                req.imageUrl, req.startDate, req.endDate, req.sourceUrl, req.active, null));
         return findById(companyId, id);
     }
 
     public Event update(long companyId, long id, EventRequest req) {
         Event existing = findById(companyId, id);
+        // La ticketera de origen se conserva: es del importador, no del formulario. Editar un
+        // evento importado no lo convierte en carga manual.
         eventRepository.update(companyId, new Event(id, existing.slug(), req.name, req.venue, req.commune, req.category,
-                req.imageUrl, req.startDate, req.endDate, req.sourceUrl, req.active));
+                req.imageUrl, req.startDate, req.endDate, req.sourceUrl, req.active, existing.source()));
+        return findById(companyId, id);
+    }
+
+    /**
+     * Activa o desactiva el evento, y nada más. Un evento inactivo no se muestra a los clientes ni
+     * acepta reservas, pero conserva las que ya tenía: es lo que se usa en vez de eliminar cuando
+     * el evento tiene historial.
+     */
+    public Event setActive(long companyId, long id, boolean active) {
+        findById(companyId, id);
+        eventRepository.setActive(companyId, id, active);
         return findById(companyId, id);
     }
 
     public void delete(long companyId, long id) {
         findById(companyId, id);
-        if (eventRepository.hasBookings(id)) {
-            throw new BusinessRuleException("El evento tiene reservas. Desactívalo en lugar de eliminarlo para conservarlas.");
+        if (eventRepository.hasTrips(id)) {
+            throw new BusinessRuleException("El evento tiene salidas publicadas. Elimínalas primero, o desactiva "
+                    + "el evento en lugar de eliminarlo para conservar su historial.");
         }
         eventRepository.delete(companyId, id);
     }

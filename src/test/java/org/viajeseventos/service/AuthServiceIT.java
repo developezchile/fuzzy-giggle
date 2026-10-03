@@ -40,6 +40,8 @@ class AuthServiceIT {
     private static FakeEmailSender emailSender;
     private static UserRepository userRepository;
     private static CompanyRepository companyRepository;
+    /** The slug a client's registration link carries — read from the database, not hardcoded. */
+    private static String companySlug;
 
     @BeforeAll
     static void setUp() {
@@ -48,6 +50,7 @@ class AuthServiceIT {
         companyRepository = new CompanyRepository(pool);
         // As at app startup: ADMIN gets every profile module (and a platform admin exists).
         AdminBootstrap.run(new ProfileRepository(pool), userRepository, companyRepository, new PasswordEncoder());
+        companySlug = TestDb.seededCompanySlug(pool);
         EmailVerificationTokenRepository evtRepo = new EmailVerificationTokenRepository(pool);
         PasswordResetTokenRepository prtRepo = new PasswordResetTokenRepository(pool);
         emailSender = new FakeEmailSender();
@@ -63,7 +66,7 @@ class AuthServiceIT {
 
     private RegisterRequest registerRequest(String username, String email) {
         return RegisterRequest.fromJson(Map.of(
-                "username", username, "email", email, "password", "Password123!", "company", "viajes-eventos"));
+                "username", username, "email", email, "password", "Password123!", "company", companySlug));
     }
 
     private RegisterCompanyRequest registerCompanyRequest(String companyName, String email) {

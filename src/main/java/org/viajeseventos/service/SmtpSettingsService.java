@@ -53,7 +53,7 @@ public final class SmtpSettingsService {
             throw new BusinessRuleException("Guarda primero un servidor, puerto y remitente para enviar la prueba.");
         }
         try {
-            emailSender.sendTest(settings, to, "Correo de prueba — Viajes a Eventos",
+            emailSender.sendTest(settings, to, "Correo de prueba — Busconciertos",
                     EmailTemplates.testEmail(settings.getProvider()));
         } catch (Exception e) {
             Throwable root = e;

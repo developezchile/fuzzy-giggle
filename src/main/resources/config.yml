@@ -40,7 +40,7 @@ smtp:
   SMTP_PASSWORD: ""
   SMTP_STARTTLS: true
   SMTP_FROM_ADDRESS: no-reply@viajeseventos.local
-  SMTP_FROM_NAME: Viajes a Eventos
+  SMTP_FROM_NAME: Busconciertos
 
 rateLimit:
   RATE_LIMIT_MAX_REQUESTS: 10

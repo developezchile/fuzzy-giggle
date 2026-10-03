@@ -2,12 +2,17 @@ package org.viajeseventos;
 
 import org.viajeseventos.config.AppConfig;
 import org.viajeseventos.controller.AuthController;
+import org.viajeseventos.controller.BoardingController;
 import org.viajeseventos.controller.BookingController;
 import org.viajeseventos.controller.CompanyController;
 import org.viajeseventos.controller.EventAdminController;
 import org.viajeseventos.controller.HealthController;
 import org.viajeseventos.controller.ProfileController;
+import org.viajeseventos.controller.PublicController;
+import org.viajeseventos.controller.ReviewController;
 import org.viajeseventos.controller.SmtpSettingsController;
+import org.viajeseventos.controller.RouteController;
+import org.viajeseventos.controller.TripAdminController;
 import org.viajeseventos.controller.UserController;
 import org.viajeseventos.db.ConnectionPool;
 import org.viajeseventos.db.MigrationRunner;
@@ -15,27 +20,41 @@ import org.viajeseventos.email.ConfigurableEmailSender;
 import org.viajeseventos.email.EmailSender;
 import org.viajeseventos.email.LoggingEmailSender;
 import org.viajeseventos.email.SmtpEmailSender;
+import org.viajeseventos.notify.EmailNotificationSender;
+import org.viajeseventos.notify.NotificationSender;
+import org.viajeseventos.notify.TripNotifier;
 import org.viajeseventos.http.Router;
 import org.viajeseventos.log.LogManager;
 import org.viajeseventos.log.Logger;
 import org.viajeseventos.repository.BookingRepository;
+import org.viajeseventos.repository.BusTypeRepository;
 import org.viajeseventos.repository.CompanyRepository;
 import org.viajeseventos.repository.EmailVerificationTokenRepository;
 import org.viajeseventos.repository.EventRepository;
+import org.viajeseventos.repository.RouteRepository;
 import org.viajeseventos.repository.PasswordResetTokenRepository;
 import org.viajeseventos.repository.ProfileRepository;
+import org.viajeseventos.repository.ReviewRepository;
 import org.viajeseventos.repository.SmtpSettingsRepository;
+import org.viajeseventos.repository.TripRepository;
 import org.viajeseventos.repository.UserRepository;
+import org.viajeseventos.repository.WaitlistRepository;
 import org.viajeseventos.security.JwtService;
 import org.viajeseventos.security.ModuleAccess;
 import org.viajeseventos.security.PasswordEncoder;
 import org.viajeseventos.security.RateLimiter;
+import org.viajeseventos.service.RouteService;
 import org.viajeseventos.service.AuthService;
+import org.viajeseventos.service.BoardingService;
 import org.viajeseventos.service.BookingService;
 import org.viajeseventos.service.CompanyService;
 import org.viajeseventos.service.EventService;
 import org.viajeseventos.service.ProfileService;
+import org.viajeseventos.service.PublicCatalogService;
+import org.viajeseventos.service.ReviewService;
 import org.viajeseventos.service.SmtpSettingsService;
+import org.viajeseventos.service.TripReminderJob;
+import org.viajeseventos.service.TripService;
 import org.viajeseventos.service.UserService;
 import com.sun.net.httpserver.HttpServer;
 
@@ -99,11 +118,34 @@ public final class Main {
                 new SmtpSettingsService(new SmtpSettingsRepository(pool), emailSender));
 
         ProfileController profileController = new ProfileController(new ProfileService(profileRepository));
-        // Chile time: an event stays bookable through its last local day.
+
+        // Chile time: an event stays bookable through its last local day, and a departure's
+        // deadline is read in the same zone.
+        Clock clock = Clock.system(ZoneId.of("America/Santiago"));
         EventRepository eventRepository = new EventRepository(pool);
-        BookingService bookingService = new BookingService(eventRepository, new BookingRepository(pool),
-                Clock.system(ZoneId.of("America/Santiago")));
+        TripRepository tripRepository = new TripRepository(pool);
+        WaitlistRepository waitlistRepository = new WaitlistRepository(pool);
+        BookingRepository bookingRepository = new BookingRepository(pool);
+        // Everything a trip tells a passenger goes through here; email is the only channel wired.
+        NotificationSender notifications = new EmailNotificationSender(emailSender);
+        TripNotifier tripNotifier = new TripNotifier(companyRepository, notifications, config.frontendUrl);
+
+        RouteService routeService = new RouteService(new RouteRepository(pool), new BusTypeRepository(pool));
+        BookingService bookingService = new BookingService(tripRepository, bookingRepository,
+                waitlistRepository, tripNotifier, clock);
+        TripService tripService = new TripService(tripRepository, eventRepository, waitlistRepository,
+                bookingRepository, tripNotifier, routeService);
+        BoardingService boardingService = new BoardingService(tripRepository, bookingRepository, new BusTypeRepository(pool), clock);
+        RouteController routeController = new RouteController(routeService);
         BookingController bookingController = new BookingController(bookingService);
+        TripAdminController tripAdminController = new TripAdminController(tripService, bookingService);
+        BoardingController boardingController = new BoardingController(boardingService);
+        ReviewRepository reviewRepository = new ReviewRepository(pool);
+        ReviewController reviewController = new ReviewController(new ReviewService(reviewRepository,
+                bookingRepository, tripRepository, companyRepository, clock));
+        // The public, indexable catalog: no module, no token. One deployment serves one company.
+        PublicController publicController = new PublicController(new PublicCatalogService(companyRepository,
+                eventRepository, tripRepository, reviewRepository, config.companySlug, clock));
         EventAdminController eventAdminController = new EventAdminController(new EventService(eventRepository));
         CompanyController companyController = new CompanyController(new CompanyService(companyRepository));
         UserController userController = new UserController(
@@ -119,6 +161,11 @@ public final class Main {
         healthController.register(router);
         authController.register(router);
         bookingController.register(router);
+        tripAdminController.register(router);
+        routeController.register(router);
+        boardingController.register(router);
+        reviewController.register(router);
+        publicController.register(router);
         eventAdminController.register(router);
         profileController.register(router);
         userController.register(router);
@@ -129,6 +176,13 @@ public final class Main {
                 r -> new Thread(r, "rate-limiter-cleanup"));
         rateLimiterCleanup.scheduleAtFixedRate(authRateLimiter::evictExpired, 5, 5, TimeUnit.MINUTES);
 
+        // The day-before reminder. The interval only decides how soon a trip entering the 24-hour
+        // window hears about it: trips.reminder_sent_at is what keeps it to one message each.
+        ScheduledExecutorService reminders = Executors.newSingleThreadScheduledExecutor(
+                r -> new Thread(r, "trip-reminders"));
+        reminders.scheduleAtFixedRate(new TripReminderJob(tripRepository, bookingRepository, tripNotifier, clock),
+                1, 30, TimeUnit.MINUTES);
+
         HttpServer server = HttpServer.create(new InetSocketAddress(config.port), 0);
         server.createContext("/", router);
         server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
@@ -137,6 +191,7 @@ public final class Main {
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             server.stop(1);
             rateLimiterCleanup.shutdownNow();
+            reminders.shutdownNow();
             pool.close();
         }));
 

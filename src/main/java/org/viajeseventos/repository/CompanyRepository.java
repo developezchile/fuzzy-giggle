@@ -2,6 +2,7 @@ package org.viajeseventos.repository;
 
 import org.viajeseventos.db.ConnectionPool;
 import org.viajeseventos.model.Company;
+import org.viajeseventos.model.Policies;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -9,6 +10,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Timestamp;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -18,6 +20,14 @@ public final class CompanyRepository {
 
     /** A company plus its size — for the platform's COMPANIES list. */
     public record Listing(Company company, int userCount, int eventCount) {
+    }
+
+    /**
+     * The company's logo as stored: the bytes, what they are, and when they were last replaced.
+     * {@code updatedAt} is what the public endpoint turns into an ETag, so a browser that already
+     * has the image doesn't download it again on every page.
+     */
+    public record Logo(String contentType, byte[] bytes, LocalDateTime updatedAt) {
     }
 
     private final ConnectionPool pool;
@@ -38,10 +48,102 @@ public final class CompanyRepository {
         return findBySlug(slug).isPresent();
     }
 
+    /**
+     * The single enabled company this deployment serves — what the public pages are about. Oldest
+     * first so a fresh install resolves to the seeded one rather than to whatever was created last.
+     */
+    public Optional<Company> findTheCompany() {
+        return findOne("SELECT * FROM companies WHERE active ORDER BY id LIMIT 1", null);
+    }
+
+    /** The logo shown in the header, or empty when the company never uploaded one. */
+    public Optional<Logo> findLogo(long companyId) {
+        Connection conn = pool.borrow();
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT content_type, bytes, updated_at FROM company_logos WHERE company_id = ?")) {
+            ps.setLong(1, companyId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) return Optional.empty();
+                Timestamp updatedAt = rs.getTimestamp("updated_at");
+                return Optional.of(new Logo(
+                        rs.getString("content_type"),
+                        rs.getBytes("bytes"),
+                        updatedAt != null ? updatedAt.toLocalDateTime() : null));
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to query the company logo", e);
+        } finally {
+            pool.release(conn);
+        }
+    }
+
+    /** Replaces the logo — one row per company, so this is an upsert rather than an insert. */
+    public void saveLogo(long companyId, String contentType, byte[] bytes) {
+        Connection conn = pool.borrow();
+        try (PreparedStatement ps = conn.prepareStatement("""
+                INSERT INTO company_logos (company_id, content_type, bytes, updated_at)
+                VALUES (?, ?, ?, NOW())
+                ON CONFLICT (company_id)
+                DO UPDATE SET content_type = EXCLUDED.content_type, bytes = EXCLUDED.bytes, updated_at = NOW()
+                """)) {
+            ps.setLong(1, companyId);
+            ps.setString(2, contentType);
+            ps.setBytes(3, bytes);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to save the company logo", e);
+        } finally {
+            pool.release(conn);
+        }
+    }
+
+    /** The company's terms of travel, shown to the client before they confirm a booking. */
+    public Policies findPolicies(long companyId) {
+        Connection conn = pool.borrow();
+        try (PreparedStatement ps = conn.prepareStatement("""
+                SELECT policy_cancellation, policy_event_cancellation, policy_no_show, policy_refund
+                FROM companies WHERE id = ?
+                """)) {
+            ps.setLong(1, companyId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) return new Policies(null, null, null, null);
+                return new Policies(
+                        rs.getString("policy_cancellation"),
+                        rs.getString("policy_event_cancellation"),
+                        rs.getString("policy_no_show"),
+                        rs.getString("policy_refund"));
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to query the company policies", e);
+        } finally {
+            pool.release(conn);
+        }
+    }
+
+    public void updatePolicies(long companyId, Policies policies) {
+        Connection conn = pool.borrow();
+        try (PreparedStatement ps = conn.prepareStatement("""
+                UPDATE companies SET policy_cancellation = ?, policy_event_cancellation = ?,
+                                     policy_no_show = ?, policy_refund = ?, updated_at = NOW()
+                WHERE id = ?
+                """)) {
+            ps.setString(1, policies.cancellation());
+            ps.setString(2, policies.eventCancellation());
+            ps.setString(3, policies.noShow());
+            ps.setString(4, policies.refund());
+            ps.setLong(5, companyId);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to update the company policies", e);
+        } finally {
+            pool.release(conn);
+        }
+    }
+
     private Optional<Company> findOne(String sql, Object param) {
         Connection conn = pool.borrow();
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setObject(1, param);
+            if (param != null) ps.setObject(1, param);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next() ? Optional.of(mapRow(rs)) : Optional.empty();
             }

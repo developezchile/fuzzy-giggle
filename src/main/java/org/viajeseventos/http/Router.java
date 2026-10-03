@@ -189,8 +189,13 @@ public final class Router implements HttpHandler {
 
     private void write(HttpExchange exchange, int status, String contentType, Object body,
                         Map<String, String> extraHeaders) throws IOException {
-        String text = Response.JSON.equals(contentType) ? Json.write(body) : (String) body;
-        byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
+        byte[] bytes;
+        if (body instanceof byte[] raw) {
+            bytes = raw;
+        } else {
+            String text = Response.JSON.equals(contentType) ? Json.write(body) : (String) body;
+            bytes = text.getBytes(StandardCharsets.UTF_8);
+        }
         exchange.getResponseHeaders().set("Content-Type", contentType);
         extraHeaders.forEach((name, value) -> exchange.getResponseHeaders().set(name, value));
         exchange.sendResponseHeaders(status, bytes.length == 0 ? -1 : bytes.length);

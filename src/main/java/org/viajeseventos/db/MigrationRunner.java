@@ -37,7 +37,17 @@ public final class MigrationRunner {
             "V3__events_bookings.sql",
             "V4__smtp_settings.sql",
             "V5__companies.sql",
-            "V6__my_bookings_module.sql"
+            "V6__my_bookings_module.sql",
+            "V8__trips.sql",
+            "V9__boarding.sql",
+            "V10__reviews_policies.sql",
+            "V11__busconciertos.sql",
+            "V12__company_logo.sql",
+            "V13__fares.sql",
+            "V14__routes.sql",
+            "V15__route_bus.sql",
+            "V16__event_imports.sql",
+            "V17__vehicles.sql"
     );
 
     private final ConnectionPool pool;

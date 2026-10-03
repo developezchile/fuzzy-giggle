@@ -27,16 +27,20 @@ public final class BookingResponse {
         map.put("startDate", event.startDate());
         map.put("endDate", event.endDate());
         map.put("sourceUrl", event.sourceUrl());
+        // De qué ticketera vino, o null si lo cargó una persona. La UI lo muestra como etiqueta.
+        map.put("source", event.source());
         return map;
     }
 
     public static Map<String, Object> from(Booking booking) {
         Map<String, Object> map = Json.obj();
         map.put("id", booking.id());
+        map.put("ticketCode", booking.ticketCode());
         map.put("status", booking.status().name());
         map.put("createdAt", booking.createdAt());
         map.put("cancelledAt", booking.cancelledAt());
-        map.put("event", event(booking.event()));
+        map.put("seats", booking.seats());
+        map.put("trip", TripResponse.from(booking.trip()));
 
         Map<String, Object> bookedBy = Json.obj();
         bookedBy.put("id", booking.userId());
@@ -45,6 +49,9 @@ public final class BookingResponse {
         map.put("bookedBy", bookedBy);
 
         map.put("passengers", booking.passengers().stream().map(BookingResponse::passenger).toList());
+        // The total of what was actually charged, not of what the departure costs today — the
+        // fare may have moved since, and this booking's price is the one its passengers were given.
+        map.put("totalClp", booking.passengers().stream().mapToInt(BookingPassenger::priceClp).sum());
         return map;
     }
 
@@ -53,9 +60,12 @@ public final class BookingResponse {
         map.put("position", p.position());
         map.put("fullName", p.fullName());
         map.put("phone", p.phone());
+        map.put("stopId", p.stopId());
         map.put("departurePlace", p.departurePlace());
         map.put("departureTime", p.departureTime().format(HH_MM));
         map.put("returnPlace", p.returnPlace());
+        map.put("priceClp", p.priceClp());
+        map.put("checkedInAt", p.checkedInAt());
         return map;
     }
 }

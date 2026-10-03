@@ -19,6 +19,14 @@ public final class AppConfig {
     public final String jwtSecret;
     public final long jwtExpirationMs;
 
+    /**
+     * The company this deployment belongs to, by slug. One deployment serves one company, so the
+     * public pages resolve it from here instead of from the URL — nobody searches a slug. Blank
+     * (the default) means "the only company there is", which is right for a fresh install and for
+     * the seeded one.
+     */
+    public final String companySlug;
+
     public final String frontendUrl;
     /** Extra browser origins allowed by CORS besides FRONTEND_URL (comma-separated CORS_ORIGINS, as in condominios). */
     public final java.util.List<String> corsOrigins;
@@ -59,6 +67,8 @@ public final class AppConfig {
         }
         this.jwtExpirationMs = Env.getLong("JWT_EXPIRATION_MS", 86_400_000L);
 
+        this.companySlug = Env.get("COMPANY_SLUG", "").trim();
+
         this.frontendUrl = stripTrailingSlash(Env.get("FRONTEND_URL", "http://localhost:3000"));
         this.corsOrigins = java.util.Arrays.stream(Env.get("CORS_ORIGINS", "").split(","))
                 .map(String::trim).filter(o -> !o.isEmpty()).map(AppConfig::stripTrailingSlash).toList();
@@ -70,7 +80,7 @@ public final class AppConfig {
         this.smtpPassword = Env.get("SMTP_PASSWORD", "");
         this.smtpStartTls = Boolean.parseBoolean(Env.get("SMTP_STARTTLS", "true"));
         this.smtpFromAddress = Env.get("SMTP_FROM_ADDRESS", "no-reply@viajeseventos.local");
-        this.smtpFromName = Env.get("SMTP_FROM_NAME", "Viajes a Eventos");
+        this.smtpFromName = Env.get("SMTP_FROM_NAME", "Busconciertos");
 
         this.rateLimitMaxRequests = Env.getInt("RATE_LIMIT_MAX_REQUESTS", 10);
         this.rateLimitWindowMs = Env.getLong("RATE_LIMIT_WINDOW_MS", 60_000L);

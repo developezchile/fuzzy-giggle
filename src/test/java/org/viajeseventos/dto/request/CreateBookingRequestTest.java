@@ -3,7 +3,6 @@ package org.viajeseventos.dto.request;
 import org.viajeseventos.exception.ValidationException;
 import org.junit.jupiter.api.Test;
 
-import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -17,8 +16,8 @@ class CreateBookingRequestTest {
         Map<String, Object> p = new HashMap<>();
         p.put("fullName", fullName);
         p.put("phone", phone);
-        p.put("departurePlace", "Terminal Rodoviario");
-        p.put("departureTime", "07:30");
+        // JSON numbers arrive as Double.
+        p.put("stopId", 7.0);
         p.put("returnPlace", "Plaza de Armas");
         return p;
     }
@@ -34,14 +33,14 @@ class CreateBookingRequestTest {
         assertEquals(1, first.position());
         assertEquals("Ana Pérez", first.fullName());
         assertEquals("+56 9 1234 5678", first.phone());
-        assertEquals(LocalTime.of(7, 30), first.departureTime());
+        assertEquals(7L, first.stopId());
         assertEquals("+56 9 8765 4321", request.passengers.get(1).phone());
     }
 
     @Test
     void reportsErrorsPerPassengerField() {
         Map<String, Object> bad = passenger("Ana", "12345");
-        bad.put("departureTime", "25:99");
+        bad.remove("stopId");
         bad.remove("returnPlace");
 
         ValidationException ex = assertThrows(ValidationException.class, () -> CreateBookingRequest.fromJson(
@@ -51,7 +50,7 @@ class CreateBookingRequestTest {
         assertEquals(4, errors.size(), errors.toString());
         assertTrue(errors.containsKey("passengers.1.fullName"));
         assertTrue(errors.containsKey("passengers.1.phone"));
-        assertTrue(errors.containsKey("passengers.1.departureTime"));
+        assertTrue(errors.containsKey("passengers.1.stopId"));
         assertTrue(errors.containsKey("passengers.1.returnPlace"));
     }
 

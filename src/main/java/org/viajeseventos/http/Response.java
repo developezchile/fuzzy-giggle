@@ -26,6 +26,20 @@ public record Response(int status, Object body, String contentType, Map<String, 
         return new Response(status, content, contentType, Map.of());
     }
 
+    /**
+     * A binary body — an image out of the database, and so far the only thing in this API that
+     * isn't text. {@link Router} writes {@code byte[]} through untouched; everything else it
+     * either JSON-encodes or casts to String.
+     */
+    public static Response bytes(String contentType, byte[] content, Map<String, String> headers) {
+        return new Response(200, content, contentType, headers);
+    }
+
+    /** Nothing changed since the caller's {@code If-None-Match} — the browser keeps what it has. */
+    public static Response notModified(Map<String, String> headers) {
+        return new Response(304, "", "text/plain; charset=utf-8", headers);
+    }
+
     /** A redirect (302 Found) — no body, just a {@code Location} header. */
     public static Response redirect(String location) {
         return new Response(302, "", "text/plain; charset=utf-8", Map.of("Location", location));

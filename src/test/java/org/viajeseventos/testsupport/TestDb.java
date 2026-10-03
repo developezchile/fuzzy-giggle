@@ -4,6 +4,7 @@ import org.viajeseventos.config.AppConfig;
 import org.viajeseventos.config.Env;
 import org.viajeseventos.db.ConnectionPool;
 import org.viajeseventos.db.MigrationRunner;
+import org.viajeseventos.model.Company;
 import org.viajeseventos.repository.CompanyRepository;
 
 /**
@@ -26,9 +27,22 @@ public final class TestDb {
         return pool;
     }
 
-    /** The company V5__companies.sql seeds, owner of the seeded events. */
+    /**
+     * The company this deployment serves — the one V5__companies.sql seeds and V13 renames to
+     * Busconciertos. Resolved the same way the app resolves it rather than by a hardcoded slug,
+     * which is what broke every IT the first time the company was renamed.
+     */
     public static long seededCompanyId(ConnectionPool pool) {
-        return new CompanyRepository(pool).findBySlug("viajes-eventos").orElseThrow().id();
+        return seededCompany(pool).id();
+    }
+
+    /** Its slug — what a registration link carries, and what the public company page is keyed by. */
+    public static String seededCompanySlug(ConnectionPool pool) {
+        return seededCompany(pool).slug();
+    }
+
+    private static Company seededCompany(ConnectionPool pool) {
+        return new CompanyRepository(pool).findTheCompany().orElseThrow();
     }
 
     /** A fresh, empty company — for tests that check one company can't see another's data. */

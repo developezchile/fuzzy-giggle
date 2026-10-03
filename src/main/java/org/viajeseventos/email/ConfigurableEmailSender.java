@@ -49,7 +49,7 @@ public final class ConfigurableEmailSender implements EmailSender {
     private EmailSender senderFor(SmtpSettings settings) {
         return new SmtpEmailSender(settings.getHost(), settings.getPort(), settings.getUsername(),
                 settings.getPassword(), settings.isStartTls(), settings.getFromAddress(),
-                settings.getFromName() != null ? settings.getFromName() : "Viajes a Eventos");
+                settings.getFromName() != null ? settings.getFromName() : "Busconciertos");
     }
 
     /** Used by the "send test email" action — sends through the given settings regardless

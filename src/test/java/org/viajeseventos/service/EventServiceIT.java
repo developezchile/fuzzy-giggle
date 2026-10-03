@@ -9,20 +9,18 @@ import org.viajeseventos.exception.ValidationException;
 import org.viajeseventos.model.Event;
 import org.viajeseventos.model.Profile;
 import org.viajeseventos.model.User;
-import org.viajeseventos.repository.BookingRepository;
+import org.viajeseventos.model.Trip;
 import org.viajeseventos.repository.EventRepository;
 import org.viajeseventos.repository.ProfileRepository;
 import org.viajeseventos.repository.UserRepository;
 import org.viajeseventos.security.Caller;
 import org.viajeseventos.testsupport.TestDb;
+import org.viajeseventos.testsupport.TripFixtures;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
-import java.time.Clock;
-import java.time.Instant;
 import java.time.LocalDate;
-import java.time.ZoneId;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -35,6 +33,7 @@ class EventServiceIT {
     private static ConnectionPool pool;
     private static EventService eventService;
     private static BookingService bookingService;
+    private static TripService tripService;
     private static UserRepository userRepository;
     private static long clientProfileId;
     private static long companyId;
@@ -44,8 +43,8 @@ class EventServiceIT {
         pool = TestDb.pool();
         EventRepository eventRepository = new EventRepository(pool);
         eventService = new EventService(eventRepository);
-        bookingService = new BookingService(eventRepository, new BookingRepository(pool),
-                Clock.fixed(Instant.parse("2026-10-01T12:00:00Z"), ZoneId.of("America/Santiago")));
+        bookingService = TripFixtures.bookingService(pool, "2026-10-01T12:00:00Z");
+        tripService = TripFixtures.tripService(pool);
         userRepository = new UserRepository(pool);
         clientProfileId = new ProfileRepository(pool).findByCode(Profile.CLIENT).orElseThrow().getId();
         companyId = TestDb.seededCompanyId(pool);
@@ -80,39 +79,45 @@ class EventServiceIT {
         assertFalse(updated.active());
     }
 
+    /** Deactivating the event closes every departure to it, which is how a sold-out tour is pulled. */
     @Test
     void deactivatedEventsAreHiddenFromClientsAndNotBookable() {
         Event event = eventService.create(companyId, request("Inactivo " + System.nanoTime(), "2026-12-01", null));
+        Trip trip = newTrip(event);
         Caller user = newUser();
-        assertTrue(listedFor(user, event.id()));
+        assertTrue(listedFor(user, trip.id()));
 
         Map<String, Object> body = body(event.name(), "2026-12-01", null);
         body.put("active", false);
         eventService.update(companyId, event.id(), EventRequest.fromJson(body));
 
-        assertFalse(listedFor(user, event.id()));
-        assertThrows(ResourceNotFoundException.class, () -> bookingService.create(user, event.id(), booking()));
+        assertFalse(listedFor(user, trip.id()));
+        assertThrows(BusinessRuleException.class, () -> bookingService.create(user, trip.id(), booking(trip)));
     }
 
+    /** An event with departures can't be deleted: it would take them, and their bookings, with it. */
     @Test
-    void onlyEventsWithoutBookingsCanBeDeleted() {
-        Event unused = eventService.create(companyId, request("Sin reservas " + System.nanoTime(), "2026-12-01", null));
+    void onlyEventsWithoutDeparturesCanBeDeleted() {
+        Event unused = eventService.create(companyId, request("Sin salidas " + System.nanoTime(), "2026-12-01", null));
         eventService.delete(companyId, unused.id());
         assertThrows(ResourceNotFoundException.class, () -> eventService.findById(companyId, unused.id()));
 
         Event booked = eventService.create(companyId, request("Con reservas " + System.nanoTime(), "2026-12-01", null));
+        Trip trip = newTrip(booked);
         Caller user = newUser();
-        var b = bookingService.create(user, booked.id(), booking());
+        var b = bookingService.create(user, trip.id(), booking(trip));
         bookingService.cancel(user.userId(), b.id());
         // Even a cancelled booking is history worth keeping.
         assertThrows(BusinessRuleException.class, () -> eventService.delete(companyId, booked.id()));
+        assertThrows(BusinessRuleException.class, () -> tripService.delete(companyId, trip.id()));
     }
 
     @Test
     void anotherCompanysEventsAreInvisibleToItsAdminsAndClients() {
         Event mine = eventService.create(companyId, request("Solo mío " + System.nanoTime(), "2026-12-01", null));
+        Trip trip = newTrip(mine);
         Caller myClient = newUser();
-        bookingService.create(myClient, mine.id(), booking());
+        bookingService.create(myClient, trip.id(), booking(trip));
 
         long other = TestDb.newCompanyId(pool);
         Caller otherClient = new Caller(myClient.userId(), other);
@@ -121,11 +126,13 @@ class EventServiceIT {
                 request("Hackeado", "2026-12-01", null)));
         assertThrows(ResourceNotFoundException.class, () -> eventService.delete(other, mine.id()));
         assertTrue(eventService.findAll(other).isEmpty());
-        assertFalse(listedFor(otherClient, mine.id()));
-        assertThrows(ResourceNotFoundException.class, () -> bookingService.create(otherClient, mine.id(), booking()));
-        assertTrue(bookingService.allBookings(other, null).isEmpty());
-        assertTrue(bookingService.allBookings(other, mine.id()).isEmpty());
-        assertTrue(bookingService.allEvents(other).isEmpty());
+        assertFalse(listedFor(otherClient, trip.id()));
+        assertThrows(ResourceNotFoundException.class, () -> bookingService.create(otherClient, trip.id(), booking(trip)));
+        assertThrows(ResourceNotFoundException.class, () -> tripService.findById(other, trip.id()));
+        assertTrue(tripService.findAll(other, null).isEmpty());
+        assertTrue(bookingService.allBookings(other, null, null).isEmpty());
+        assertTrue(bookingService.allBookings(other, trip.id(), null).isEmpty());
+        assertTrue(bookingService.allTrips(other).isEmpty());
     }
 
     @Test
@@ -164,8 +171,13 @@ class EventServiceIT {
         return EventRequest.fromJson(body(name, start, end));
     }
 
-    private static boolean listedFor(Caller user, long eventId) {
-        return bookingService.upcomingEvents(user).stream().anyMatch(l -> l.event().id() == eventId);
+    private static Trip newTrip(Event event) {
+        return tripService.create(companyId, TripFixtures.trip(event.id(), "2026-12-01T08:00", 40));
+    }
+
+    private static boolean listedFor(Caller user, long tripId) {
+        return bookingService.upcomingEvents(user).stream()
+                .flatMap(l -> l.trips().stream()).anyMatch(t -> t.id() == tripId);
     }
 
     private static Caller newUser() {
@@ -181,9 +193,8 @@ class EventServiceIT {
         return new Caller(userRepository.insert(user).getId(), companyId);
     }
 
-    private static CreateBookingRequest booking() {
-        return CreateBookingRequest.fromJson(Map.of("passengers", List.of(Map.of(
-                "fullName", "Ana Pérez", "phone", "912345678", "departurePlace", "Terminal",
-                "departureTime", "08:00", "returnPlace", "Terminal"))));
+    private static CreateBookingRequest booking(Trip trip) {
+        return CreateBookingRequest.fromJson(
+                TripFixtures.bookingBody(trip.stops().getFirst().id(), "Ana Pérez"));
     }
 }

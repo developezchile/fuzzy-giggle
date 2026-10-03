@@ -3,6 +3,8 @@ package org.viajeseventos.validation;
 import org.viajeseventos.exception.ValidationException;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
@@ -118,6 +120,47 @@ public final class Validate {
         } catch (DateTimeParseException e) {
             errors.put(field, "debe tener el formato AAAA-MM-DD");
             return null;
+        }
+    }
+
+    /** Parses an ISO {@code YYYY-MM-DDTHH:MM} string (what {@code <input type="datetime-local">} sends). */
+    public static LocalDateTime dateTimeVal(Map<String, String> errors, String field, String value) {
+        if (value == null || value.isBlank()) return null;
+        try {
+            return LocalDateTime.parse(value.length() == 16 ? value : value.substring(0, 16));
+        } catch (DateTimeParseException | IndexOutOfBoundsException e) {
+            errors.put(field, "debe tener el formato AAAA-MM-DDTHH:MM");
+            return null;
+        }
+    }
+
+    /** Parses an {@code HH:MM} string (what {@code <input type="time">} sends). */
+    public static LocalTime timeVal(Map<String, String> errors, String field, String value) {
+        if (value == null || value.isBlank()) return null;
+        try {
+            return LocalTime.parse(value);
+        } catch (DateTimeParseException e) {
+            errors.put(field, "debe tener el formato HH:MM");
+            return null;
+        }
+    }
+
+    /** Like {@link #longVal} for the many small counts and amounts that are ints. */
+    public static Integer intVal(Map<String, String> errors, Map<String, Object> json, String key) {
+        Long value = longVal(errors, json, key);
+        if (value == null) return null;
+        if (value > Integer.MAX_VALUE || value < Integer.MIN_VALUE) {
+            errors.put(key, "está fuera de rango");
+            return null;
+        }
+        return value.intValue();
+    }
+
+    /** Records an error unless {@code min <= value <= max}; a null value is left to {@link #notNull}. */
+    public static void range(Map<String, String> errors, String field, Integer value, int min, int max) {
+        if (value == null || errors.containsKey(field)) return;
+        if (value < min || value > max) {
+            errors.put(field, "debe estar entre " + min + " y " + max);
         }
     }
 
